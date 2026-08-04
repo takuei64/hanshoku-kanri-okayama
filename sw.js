@@ -1,7 +1,7 @@
 'use strict';
 
-const CACHE_NAME = 'breeding-pwa-v137-github-1';
-const BASE_PATH = '/hanshoku-kanri/';
+const CACHE_NAME = 'breeding-okayama-pwa-v1';
+const BASE_PATH = '/hanshoku-kanri-okayama/';
 const APP_SHELL = [
   BASE_PATH,
   BASE_PATH + 'index.html',
@@ -10,6 +10,7 @@ const APP_SHELL = [
   BASE_PATH + 'icon-512.png',
   BASE_PATH + 'breeding.css',
   BASE_PATH + 'pwa.css',
+  BASE_PATH + 'pwa-config.js',
   BASE_PATH + 'pwa-runtime.js',
   BASE_PATH + 'pwa-hooks.js',
   BASE_PATH + 'js_offline.js',

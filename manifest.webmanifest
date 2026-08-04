@@ -1,23 +1,23 @@
 {
-  "name": "繁殖管理",
-  "short_name": "繁殖管理",
-  "description": "圏外でも起動・入力できる繁殖管理アプリ",
-  "id": "/hanshoku-kanri/",
-  "start_url": "/hanshoku-kanri/",
-  "scope": "/hanshoku-kanri/",
+  "name": "岡山農場 繁殖管理",
+  "short_name": "岡山繁殖",
+  "description": "吉備養豚合同会社の圏外対応繁殖管理アプリ",
+  "id": "/hanshoku-kanri-okayama/",
+  "start_url": "/hanshoku-kanri-okayama/",
+  "scope": "/hanshoku-kanri-okayama/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#f0f2f5",
   "theme_color": "#1a73e8",
   "icons": [
     {
-      "src": "/hanshoku-kanri/icon-192.png",
+      "src": "/hanshoku-kanri-okayama/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/hanshoku-kanri/icon-512.png",
+      "src": "/hanshoku-kanri-okayama/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"

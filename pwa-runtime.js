@@ -1,12 +1,14 @@
 (function(global) {
   'use strict';
 
-  var BACKEND_URL = 'https://script.google.com/macros/s/AKfycbwIZb3Zyxuu7Y-9xfTC0Chmvjuv1qX1dKWwuCj2_iH5ilIpT1gGBBskcjNg_sqk85Mk/exec';
+  var APP_CONFIG = global.OKAYAMA_APP_CONFIG || {};
+  var BACKEND_URL = String(APP_CONFIG.backendUrl || '');
+  var STORAGE_NAMESPACE = String(APP_CONFIG.storageNamespace || 'hanshoku-kanri-okayama-v1');
 
   var PwaStore = {
-    snapshotKey: 'breedingDataSnapshot_v1',
-    snapshotTimeKey: 'breedingDataSnapshotTime_v1',
-    cardPrefix: 'breedingSowCard_v1_',
+    snapshotKey: STORAGE_NAMESPACE + ':data-snapshot',
+    snapshotTimeKey: STORAGE_NAMESPACE + ':data-snapshot-time',
+    cardPrefix: STORAGE_NAMESPACE + ':sow-card:',
 
     loadInitialData: function() {
       try {
@@ -64,7 +66,7 @@
   };
 
   var PwaAuth = {
-    storageKey: 'breedingAuthToken',
+    storageKey: STORAGE_NAMESPACE + ':auth-token',
     overlay: null,
     frame: null,
 
@@ -110,6 +112,10 @@
       PwaAuth.ensureUi();
       if (!PwaAuth.overlay || !PwaAuth.frame) return;
       if (!PwaAuth.overlay.hidden) return;
+      if (!BACKEND_URL) {
+        PwaShell.showConfigurationError();
+        return;
+      }
       document.getElementById('pwa-login-footer').hidden = !PwaStore.hasSnapshot();
       PwaAuth.overlay.hidden = false;
       PwaAuth.frame.src = BACKEND_URL + '?pwaLogin=1&_=' + Date.now();
@@ -285,6 +291,14 @@
         else PwaShell.backgroundRefresh(true);
       });
       PwaShell.gate = gate;
+    },
+
+    showConfigurationError: function() {
+      PwaShell.ensureGate();
+      document.getElementById('pwa-gate-title').textContent = '公開設定が未完了です';
+      document.getElementById('pwa-gate-message').textContent = '管理者が岡山版の接続先を設定しています。';
+      document.getElementById('pwa-gate-action').hidden = true;
+      PwaShell.gate.hidden = false;
     },
 
     showFirstUseGate: function(loading) {

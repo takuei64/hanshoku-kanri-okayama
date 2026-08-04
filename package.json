@@ -1,0 +1,11 @@
+{
+  "name": "hanshoku-kanri-okayama",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test:pwa": "playwright test tests/pwa-offline.spec.js --reporter=line --workers=1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

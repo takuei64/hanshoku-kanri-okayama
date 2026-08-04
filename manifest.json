@@ -1,20 +1,26 @@
 {
- "name": "繁殖管理",
- "short_name": "繁殖管理",
- "start_url": "./",
+ "name": "岡山農場 繁殖管理",
+ "short_name": "岡山繁殖",
+ "description": "吉備養豚合同会社の圏外対応繁殖管理アプリ",
+ "id": "/hanshoku-kanri-okayama/",
+ "start_url": "/hanshoku-kanri-okayama/",
+ "scope": "/hanshoku-kanri-okayama/",
  "display": "standalone",
- "background_color": "#f8f9fa",
+ "orientation": "portrait",
+ "background_color": "#f0f2f5",
  "theme_color": "#1a73e8",
  "icons": [
   {
-   "src": "icon-192.png",
+   "src": "/hanshoku-kanri-okayama/icon-192.png",
    "sizes": "192x192",
-   "type": "image/png"
+   "type": "image/png",
+   "purpose": "any maskable"
   },
   {
-   "src": "icon-512.png",
+   "src": "/hanshoku-kanri-okayama/icon-512.png",
    "sizes": "512x512",
-   "type": "image/png"
+   "type": "image/png",
+   "purpose": "any maskable"
   }
  ]
 }

@@ -2,17 +2,11 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1a73e8">
-  <meta name="mobile-web-app-capable" content="yes">
-  <title>岡山農場 繁殖管理</title>
-  <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="icon" href="./icon-192.png" type="image/png">
-  <link rel="apple-touch-icon" href="./icon-192.png">
-  <link rel="stylesheet" href="./breeding.css">
-  <link rel="stylesheet" href="./pwa.css">
-  <script src="./pwa-config.js"></script>
-  <script src="./pwa-runtime.js"></script>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <base target="_top">
+  <?!= include('css') ?>
 </head>
 <body>
 
@@ -309,26 +303,18 @@
 <div class="toast" id="toast"></div>
 
 <script>
-var __initialData = PwaStore.loadInitialData();
-var __authToken = PwaAuth.loadToken();
+var __initialData = <?!= initialData ?>;
+var __authToken = <?!= authToken ?>;
 </script>
-<script src="./js_offline.js"></script>
-<script src="./js_app.js"></script>
-<script src="./js_breeding.js"></script>
-<script src="./js_postmating.js"></script>
-<script src="./js_reheatcheck.js"></script>
-<script src="./js_pregcheck.js"></script>
-<script src="./js_farrowing.js"></script>
-<script src="./js_sow.js"></script>
-<script src="./js_pentask.js"></script>
-<script src="./pwa-hooks.js"></script>
-<script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function() {
-    navigator.serviceWorker.register('./sw.js').catch(function() {});
-  });
-}
-</script>
+<?!= include('js_offline') ?>
+<?!= include('js_app') ?>
+<?!= include('js_breeding') ?>
+<?!= include('js_postmating') ?>
+<?!= include('js_reheatcheck') ?>
+<?!= include('js_pregcheck') ?>
+<?!= include('js_farrowing') ?>
+<?!= include('js_sow') ?>
+<?!= include('js_pentask') ?>
 
 </body>
 </html>

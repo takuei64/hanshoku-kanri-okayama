@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <base target="_top">
+  <style>
+    :root {
+      --primary: #1a73e8;
+      --danger: #d93025;
+      --border: #dadce0;
+      --text: #202124;
+      --sub: #5f6368;
+      --bg: #f8f9fa;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "HGPゴシックM", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 24px;
+    }
+    .login-box {
+      width: 100%;
+      max-width: 360px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 22px;
+      box-shadow: 0 2px 10px rgba(60, 64, 67, 0.12);
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0 0 6px;
+      font-weight: 700;
+    }
+    .sub {
+      color: var(--sub);
+      font-size: 13px;
+      margin-bottom: 18px;
+    }
+    input {
+      width: 100%;
+      height: 46px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 20px;
+      padding: 0 12px;
+      letter-spacing: 0;
+    }
+    button {
+      width: 100%;
+      height: 44px;
+      margin-top: 12px;
+      border: 0;
+      border-radius: 6px;
+      background: var(--primary);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+    }
+    button:disabled { opacity: .65; }
+    .error {
+      min-height: 18px;
+      margin-top: 10px;
+      color: var(--danger);
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <form class="login-box" id="login-form">
+    <h1>岡山農場 繁殖管理</h1>
+    <div class="sub">パスワードを入力してください</div>
+    <input id="password" type="password" inputmode="numeric" autocomplete="current-password" autofocus>
+    <button id="submit" type="submit">開く</button>
+    <div class="error" id="error"></div>
+  </form>
+  <script>
+    var appUrl = <?!= appUrl ?>;
+
+    localStorage.removeItem('hanshoku-kanri-okayama-v1:auth-token');
+
+    // ラッパーページ(iframe埋め込み)がいる場合はラッパーに遷移を任せ、
+    // いない場合は従来通りトップページを遷移させる。
+    // Googleの警告バナーはトップレベル表示のときだけ出るため、
+    // ラッパー内では iframe の src 差し替えで遷移する必要がある。
+    function navigateToApp(url) {
+      var acked = false;
+      function onAck(e) {
+        if (e.data && e.data.type === 'breeding-wrapper-ack') acked = true;
+      }
+      window.addEventListener('message', onAck);
+      try {
+        window.top.postMessage({ type: 'breeding-navigate', url: url }, '*');
+      } catch (err) {}
+      setTimeout(function() {
+        window.removeEventListener('message', onAck);
+        if (!acked) window.top.location.replace(url);
+      }, 500);
+    }
+
+    document.getElementById('login-form').addEventListener('submit', function(e) {
+      e.preventDefault();
+      var password = document.getElementById('password').value;
+      var button = document.getElementById('submit');
+      var error = document.getElementById('error');
+      button.disabled = true;
+      error.textContent = '';
+      google.script.run
+        .withSuccessHandler(function(res) {
+          localStorage.setItem('hanshoku-kanri-okayama-v1:auth-token', res.token);
+          var url = new URL(appUrl);
+          url.searchParams.set('token', res.token);
+          navigateToApp(url.toString());
+        })
+        .withFailureHandler(function(err) {
+          button.disabled = false;
+          error.textContent = err && err.message ? err.message : 'ログインできませんでした';
+        })
+        .issueAuthToken(password);
+    });
+  </script>
+</body>
+</html>
