@@ -335,6 +335,7 @@ var OfflineSync = {
       recordStatusChange: '状態変更',
       recordMating: '種付',
       recordFarrowing: '分娩',
+      recordWeaning: '離乳',
       recordNursingAccident: '事故・死亡',
       recordPenTasks: '作業記録',
       deletePenTask: '作業取消',

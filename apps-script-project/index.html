@@ -89,6 +89,11 @@
     <div id="accident-list"></div>
   </div>
 
+  <!-- 画面6: 離乳登録 -->
+  <div id="page-weaning" class="page">
+    <div id="weaning-list"></div>
+  </div>
+
   <!-- 分娩舎移動モーダル -->
   <div class="modal-overlay" id="farrow-move-modal">
     <div class="modal-content" style="position:relative">
@@ -126,6 +131,30 @@
         </div>
       </div>
       <button class="submit-btn" onclick="Farrowing.confirmRecord()">分娩を記録</button>
+    </div>
+  </div>
+
+  <!-- 離乳・繁殖舎移動モーダル -->
+  <div class="modal-overlay" id="weaning-modal">
+    <div class="modal-content" style="position:relative">
+      <button class="modal-close" onclick="App.hideModal('weaning-modal')">&times;</button>
+      <div class="modal-title">離乳登録 <span id="weaning-sow-label"></span></div>
+      <div id="weaning-current-pen" style="font-size:13px;color:var(--text-sub);margin-bottom:12px;text-align:center"></div>
+      <div class="form-group">
+        <label>離乳日</label>
+        <input type="date" id="weaning-date">
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <label>離乳頭数</label>
+          <input type="number" id="weaning-count" inputmode="numeric" min="0" step="1" placeholder="頭数">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label>移動先Pen</label>
+          <input type="number" id="weaning-pen" inputmode="numeric" min="1" max="58" step="1" placeholder="1～58">
+        </div>
+      </div>
+      <button class="submit-btn" onclick="Weaning.submit()">離乳・移動を登録</button>
     </div>
   </div>
 
@@ -181,7 +210,7 @@
     </div>
   </div>
 
-  <!-- 画面6: 母豚現在地一覧 -->
+  <!-- 画面7: 母豚現在地一覧 -->
   <div id="page-location" class="page">
     <div class="search-bar">
       <input type="text" id="location-search" placeholder="母豚No検索" oninput="SowLocation.filter()">
@@ -190,7 +219,7 @@
     <div id="location-list"></div>
   </div>
 
-  <!-- 画面7: ペン作業（子豚向けワクチン・処置） -->
+  <!-- 画面8: ペン作業（子豚向けワクチン・処置） -->
   <div id="page-pentask" class="page">
     <div id="pentask-list"></div>
   </div>
@@ -209,7 +238,7 @@
     </div>
   </div>
 
-  <!-- 画面8: 母豚個体カード -->
+  <!-- 画面9: 母豚個体カード -->
   <div id="page-sowcard" class="page">
     <div class="search-bar">
       <input type="number" id="card-search-input" inputmode="numeric" placeholder="母豚番号">
@@ -270,7 +299,7 @@
   </div>
 </div>
 
-<!-- タブバー（5タブ: 繁殖に種後・再発を統合） -->
+<!-- タブバー（6タブ: 繁殖に種後・再発を統合） -->
 <div class="tab-bar">
   <button data-page="breeding" class="active">
     <span class="tab-icon">&#9776;</span>
@@ -283,6 +312,10 @@
   <button data-page="farrowing">
     <span class="tab-icon">&#8962;</span>
     <span>分娩</span>
+  </button>
+  <button data-page="weaning">
+    <span class="tab-icon">&#8644;</span>
+    <span>離乳</span>
   </button>
   <button data-page="location">
     <span class="tab-icon">&#9960;</span>
@@ -313,6 +346,7 @@ var __authToken = <?!= authToken ?>;
 <?!= include('js_reheatcheck') ?>
 <?!= include('js_pregcheck') ?>
 <?!= include('js_farrowing') ?>
+<?!= include('js_weaning') ?>
 <?!= include('js_sow') ?>
 <?!= include('js_pentask') ?>
 

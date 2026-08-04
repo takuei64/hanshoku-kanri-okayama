@@ -13,7 +13,10 @@ const snapshot = {
   postMatingList: [],
   farrowingList: [],
   accidentList: [],
-  locationList: [{ sowNo: '900', penNo: '1', area: '繁殖舎', info: '育成', status: '' }],
+  locationList: [
+    { sowNo: '900', penNo: '1', area: '繁殖舎', info: '育成', status: '' },
+    { sowNo: '901', penNo: '1001', area: '分娩舎', info: '分娩21日目', status: '' }
+  ],
   reheatCheckList: [],
   pregnancyCheckList: [],
   penTaskList: []
@@ -55,11 +58,11 @@ test('初期同期後は圏外再起動とBT削除キュー保持ができる', 
   await page.evaluate(() => navigator.serviceWorker.ready);
   const cacheResult = await page.evaluate(async () => {
     const names = await caches.keys();
-    const cache = await caches.open('breeding-okayama-pwa-v1');
+    const cache = await caches.open('breeding-okayama-pwa-v2');
     const keys = await cache.keys();
     return { names, urls: keys.map(item => new URL(item.url).pathname) };
   });
-  expect(cacheResult.names).toContain('breeding-okayama-pwa-v1');
+  expect(cacheResult.names).toContain('breeding-okayama-pwa-v2');
   expect(cacheResult.urls).toContain('/hanshoku-kanri-okayama/index.html');
   expect(cacheResult.urls).toContain('/hanshoku-kanri-okayama/pwa-runtime.js');
   expect(cacheResult.urls).toContain('/hanshoku-kanri-okayama/icon-512.png');
@@ -95,5 +98,76 @@ test('初期同期後は圏外再起動とBT削除キュー保持ができる', 
   }, namespace);
   expect(queuedAfterReload).toHaveLength(1);
   expect(queuedAfterReload[0].id).toBe(queuedBeforeReload[0].id);
+  await context.close();
+});
+
+test('圏外でも離乳頭数と繁殖舎移動を一括登録して再起動後まで保持できる', async ({ browser }) => {
+  const context = await browser.newContext({ serviceWorkers: 'allow' });
+  await context.addInitScript(({ namespace, snapshot }) => {
+    if (localStorage.getItem(namespace + ':weaning-test-seeded') === '1') return;
+    localStorage.setItem(namespace + ':auth-token', 'test-token');
+    localStorage.setItem(namespace + ':data-snapshot', JSON.stringify(snapshot));
+    localStorage.setItem(namespace + ':data-snapshot-time', new Date().toISOString());
+    localStorage.setItem(namespace + ':weaning-test-seeded', '1');
+  }, { namespace, snapshot });
+
+  await context.route('https://script.google.com/**', async route => {
+    const requestUrl = new URL(route.request().url());
+    const requestId = requestUrl.searchParams.get('requestId') || 'request';
+    const method = requestUrl.searchParams.get('method');
+    const response = {
+      requestId,
+      ok: true,
+      result: method === 'executeQueuedOperation' ? { success: true } : snapshot,
+      error: ''
+    };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/javascript; charset=utf-8',
+      body: 'PwaJsonp.handle(' + JSON.stringify(response) + ');'
+    });
+  });
+
+  const page = await context.newPage();
+  await page.goto(appUrl);
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  await context.unroute('https://script.google.com/**');
+  await context.setOffline(true);
+
+  await page.locator('[data-page="weaning"]').click();
+  await expect(page.locator('#weaning-list')).toContainText('No.901');
+  await expect(page.locator('#weaning-list')).toContainText('Pen 1001');
+  await page.getByRole('button', { name: '離乳登録' }).click();
+  await expect(page.locator('#weaning-current-pen')).toContainText('現在 Pen 1001');
+  await page.locator('#weaning-date').fill('2026-08-04');
+  await page.locator('#weaning-count').fill('10');
+  await page.locator('#weaning-pen').fill('12');
+  await page.getByRole('button', { name: '離乳・移動を登録' }).click();
+
+  await expect(page.locator('#weaning-list')).toContainText('分娩舎に母豚はいません');
+  await expect(page.locator('#sync-status')).toContainText('通信待ち 1');
+  const queued = await page.evaluate(namespace => {
+    return JSON.parse(localStorage.getItem(namespace + ':offline-queue') || '[]');
+  }, namespace);
+  expect(queued).toHaveLength(1);
+  expect(queued[0].type).toBe('recordWeaning');
+  expect(queued[0].args).toEqual(['901', '2026-08-04', 10, '12']);
+
+  await expect.poll(async () => page.evaluate(namespace => {
+    const data = JSON.parse(localStorage.getItem(namespace + ':data-snapshot') || '{}');
+    const sow = (data.locationList || []).find(item => String(item.sowNo) === '901');
+    return sow ? sow.area + ':' + sow.penNo : '';
+  }, namespace)).toBe('繁殖舎:12');
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    window.dispatchEvent(new Event('offline'));
+  });
+  await expect(page.locator('#card-901')).toContainText('離乳移動 0日目');
+  await expect(page.locator('#sync-status')).toContainText('通信待ち 1');
+  await page.locator('[data-page="location"]').click();
+  await expect(page.locator('#location-list')).toContainText('No.901');
+  await expect(page.locator('#location-list')).toContainText('Pen 12');
   await context.close();
 });

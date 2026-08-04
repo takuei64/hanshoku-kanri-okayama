@@ -1,0 +1,123 @@
+// 離乳登録ページ
+
+var Weaning = {
+  selectedSow: null,
+  selectedCurrentPen: null,
+
+  getList: function() {
+    return SowLocation.list.filter(function(s) {
+      return String(s.area || '') === '分娩舎';
+    }).sort(function(a, b) {
+      var penA = parseInt(a.penNo, 10) || 99999;
+      var penB = parseInt(b.penNo, 10) || 99999;
+      if (penA !== penB) return penA - penB;
+      return (parseInt(a.sowNo, 10) || 0) - (parseInt(b.sowNo, 10) || 0);
+    });
+  },
+
+  render: function() {
+    var container = document.getElementById('weaning-list');
+    var list = Weaning.getList();
+    if (!container) return;
+    if (list.length === 0) {
+      container.innerHTML =
+        '<div class="empty-state">' +
+          '<div class="icon">&#10003;</div>' +
+          '<div>分娩舎に母豚はいません</div>' +
+        '</div>';
+      return;
+    }
+
+    var html = '<div style="font-size:12px;color:var(--text-sub);padding:4px 4px 8px">分娩舎 ' + list.length + '頭</div>';
+    for (var i = 0; i < list.length; i++) {
+      var s = list[i];
+      html += '<div class="card type-weaned">';
+      html += '<div class="card-header">';
+      html += '<span class="sow-no">No.' + s.sowNo + '</span>';
+      html += '<span class="pen-no">Pen ' + s.penNo + '</span>';
+      html += '</div>';
+      if (s.info) html += '<div class="reason-label">' + s.info + '</div>';
+      html += '<button class="submit-btn" onclick="Weaning.open(\'' + s.sowNo + '\',\'' + s.penNo + '\')">離乳登録</button>';
+      html += '</div>';
+    }
+    container.innerHTML = html;
+  },
+
+  open: function(sowNo, currentPen) {
+    Weaning.selectedSow = String(sowNo);
+    Weaning.selectedCurrentPen = String(currentPen);
+    document.getElementById('weaning-sow-label').textContent = 'No.' + sowNo;
+    document.getElementById('weaning-current-pen').textContent = '現在 Pen ' + currentPen + '（分娩舎）';
+    document.getElementById('weaning-count').value = '';
+    document.getElementById('weaning-pen').value = '';
+    App.setDateDefault('weaning-date');
+    App.showModal('weaning-modal');
+  },
+
+  submit: function() {
+    var sowNo = Weaning.selectedSow;
+    var dateStr = document.getElementById('weaning-date').value;
+    var countText = document.getElementById('weaning-count').value.trim();
+    var targetPen = document.getElementById('weaning-pen').value.trim();
+    var weanedCount = Number(countText);
+    var penNumber = Number(targetPen);
+
+    if (!dateStr) { App.toast('離乳日を入力してください'); return; }
+    if (countText === '' || !isFinite(weanedCount) || weanedCount < 0 || Math.floor(weanedCount) !== weanedCount) {
+      App.toast('離乳頭数を入力してください');
+      return;
+    }
+    if (!targetPen || !isFinite(penNumber) || Math.floor(penNumber) !== penNumber || penNumber < 1 || penNumber > 58) {
+      App.toast('移動先は繁殖舎のPen 1～58で入力してください');
+      return;
+    }
+
+    App.hideModal('weaning-modal');
+    Weaning.applyLocal(sowNo, targetPen, dateStr);
+    Weaning.render();
+    OfflineSync.enqueue('recordWeaning', [sowNo, dateStr, weanedCount, targetPen]);
+    App.toast('離乳・移動を記録しました');
+  },
+
+  applyLocal: function(sowNo, targetPen, dateStr) {
+    var sn = String(sowNo);
+    var i;
+    for (i = 0; i < SowLocation.list.length; i++) {
+      if (String(SowLocation.list[i].sowNo) !== sn) continue;
+      SowLocation.list[i].penNo = String(targetPen);
+      SowLocation.list[i].area = '繁殖舎';
+      SowLocation.list[i].status = '';
+      SowLocation.list[i].info = '離乳 0日目';
+      break;
+    }
+
+    Breeding.list = Breeding.list.filter(function(s) { return String(s.sowNo) !== sn; });
+    Breeding.list.push({
+      sowNo: sn,
+      penNo: String(targetPen),
+      reason: '離乳移動 0日目',
+      days: 0,
+      group: 1,
+      status: '',
+      btHistory: []
+    });
+    Breeding.list.sort(function(a, b) {
+      return (parseInt(a.penNo, 10) || 99999) - (parseInt(b.penNo, 10) || 99999);
+    });
+
+    Farrowing.list = Farrowing.list.filter(function(s) { return String(s.sowNo) !== sn; });
+    ReheatCheck.list = ReheatCheck.list.filter(function(s) { return String(s.sowNo) !== sn; });
+    PostMating.list = PostMating.list.filter(function(s) { return String(s.sowNo) !== sn; });
+    PregCheck.list = PregCheck.list.filter(function(s) { return String(s.sowNo) !== sn; });
+    for (i = 0; i < PenTask.list.length; i++) {
+      PenTask.list[i].sows = PenTask.list[i].sows.filter(function(no) { return String(no) !== sn; });
+    }
+    PenTask.list = PenTask.list.filter(function(p) { return p.sows.length > 0; });
+
+    if (App.currentPage === 'location') SowLocation.render();
+    if (App.currentPage === 'breeding') Breeding.render();
+    if (App.currentPage === 'farrowing') Farrowing.render();
+    if (App.currentPage === 'pregcheck') PregCheck.render();
+    if (App.currentPage === 'pentask') PenTask.render();
+  }
+};

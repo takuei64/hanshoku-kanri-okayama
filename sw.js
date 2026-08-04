@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'breeding-okayama-pwa-v1';
+const CACHE_NAME = 'breeding-okayama-pwa-v2';
 const BASE_PATH = '/hanshoku-kanri-okayama/';
 const APP_SHELL = [
   BASE_PATH,
@@ -20,6 +20,7 @@ const APP_SHELL = [
   BASE_PATH + 'js_reheatcheck.js',
   BASE_PATH + 'js_pregcheck.js',
   BASE_PATH + 'js_farrowing.js',
+  BASE_PATH + 'js_weaning.js',
   BASE_PATH + 'js_sow.js',
   BASE_PATH + 'js_pentask.js'
 ];

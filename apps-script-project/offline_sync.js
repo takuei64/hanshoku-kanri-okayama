@@ -62,6 +62,7 @@ function validateQueuedOperation_(operation) {
     recordStatusChange: 3,
     recordMating: 2,
     recordFarrowing: 4,
+    recordWeaning: 4,
     recordNursingAccident: 3,
     recordPenTasks: 3,
     deletePenTask: 3,
@@ -89,6 +90,8 @@ function dispatchQueuedOperation_(type, args, authToken) {
       return recordMating(args[0], args[1], authToken);
     case 'recordFarrowing':
       return recordFarrowing(args[0], args[1], args[2], args[3], authToken);
+    case 'recordWeaning':
+      return recordWeaning(args[0], args[1], args[2], args[3], authToken);
     case 'recordNursingAccident':
       return recordNursingAccident(args[0], args[1], args[2], authToken);
     case 'recordPenTasks':

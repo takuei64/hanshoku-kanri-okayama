@@ -1292,6 +1292,79 @@ function recordFarrowing(sowNo, dateStr, totalBorn, stillBorn, authToken) {
 }
 
 /**
+ * 離乳記録と分娩舎から繁殖舎への移動を1操作で保存する。
+ * 途中で失敗した場合は追加行を戻し、現在状況も元データから再構築する。
+ */
+function recordWeaning(sowNo, dateStr, weanedCount, targetPen, authToken) {
+  requireAuth_(authToken);
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    var ss = getSpreadsheet();
+    var sn = normalizeSowNo(sowNo);
+    if (!sn) throw new Error('母豚Noを確認してください');
+
+    var countText = weanedCount === null || weanedCount === undefined ? '' : String(weanedCount).trim();
+    var count = Number(countText);
+    if (countText === '' || !isFinite(count) || count < 0 || Math.floor(count) !== count) {
+      throw new Error('離乳頭数を0以上の整数で入力してください');
+    }
+
+    var penNo = normalizePenNo(targetPen);
+    var area = getPenAreaForCurrent_(ss, penNo);
+    if (area !== '繁殖舎') throw new Error('移動先は繁殖舎のPENを指定してください');
+
+    var inputDate = String(dateStr || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(inputDate)) throw new Error('離乳日を確認してください');
+    var date = parseInputDate(inputDate);
+    if (isNaN(date.getTime()) || toDateString(date) !== inputDate) throw new Error('離乳日を確認してください');
+    var ds = toDateString(date);
+
+    var current = findCurrentRow_(ensureCurrentStatusSheet_(ss), sn);
+    if (!current.row || current.row.area !== '分娩舎') {
+      throw new Error('No.' + sn + ' は現在、分娩舎にいません');
+    }
+
+    var weaningSheet = ss.getSheetByName('離乳');
+    var breedingSheet = ss.getSheetByName('繁殖管理');
+    if (!weaningSheet) throw new Error('離乳シートが見つかりません');
+    if (!breedingSheet) throw new Error('繁殖管理シートが見つかりません');
+
+    var weaningRow = weaningSheet.getLastRow() + 1;
+    var breedingRow = breedingSheet.getLastRow() + 1;
+    var wroteWeaning = false;
+    var wroteBreeding = false;
+    try {
+      weaningSheet.getRange(weaningRow, 1, 1, 4).setValues([[sn, date, count, '']]);
+      wroteWeaning = true;
+      breedingSheet.getRange(breedingRow, 1, 1, 5).setValues([[date, sn, penNo, '', '離乳']]);
+      wroteBreeding = true;
+      upsertCurrentRow_(ss, sn, {
+        penNo: penNo,
+        area: area,
+        latestMoveDate: ds,
+        matingStatus: '',
+        breedingDoneDate: '',
+        postMatingDoneDate: '',
+        reheatDoneDate: '',
+        pregnancyDoneDate: '',
+        emptyDate: ''
+      });
+    } catch (writeError) {
+      if (wroteBreeding && breedingSheet.getLastRow() >= breedingRow) breedingSheet.deleteRow(breedingRow);
+      if (wroteWeaning && weaningSheet.getLastRow() >= weaningRow) weaningSheet.deleteRow(weaningRow);
+      try { syncCurrentStatusForSow_(ss, sn); } catch (syncError) {}
+      throw writeError;
+    }
+
+    try { invalidateInitialCache_(); } catch (cacheError) {}
+    return { success: true, sowNo: sn, penNo: penNo, weanedCount: count, status: '離乳' };
+  } catch (e) {
+    return { success: false, error: e.message };
+  } finally { lock.releaseLock(); }
+}
+
+/**
  * 種付シートの1行を削除（タイプミス修正用）
  * 末尾から検索して母豚No+日付一致の最初の行を削除
  * 同日に複数種付が記録された場合は末尾（最新）から1件のみ削除
