@@ -1,0 +1,136 @@
+// 分娩舎移動ページ
+
+var Farrowing = {
+  list: [],
+  selectedSow: null,
+  recordSowNo: null,
+
+  render: function() {
+    var container = document.getElementById('farrowing-list');
+    if (Farrowing.list.length === 0) {
+      container.innerHTML =
+        '<div class="empty-state">' +
+          '<div class="icon">&#10003;</div>' +
+          '<div>対象の母豚はいません</div>' +
+        '</div>';
+      return;
+    }
+
+    var html = '<table class="farrow-table">';
+    html += '<thead><tr>';
+    html += '<th>母豚No</th><th>ペン</th><th>種付日</th><th>経過</th><th>分娩予定</th><th></th>';
+    html += '</tr></thead><tbody>';
+
+    for (var i = 0; i < Farrowing.list.length; i++) {
+      var s = Farrowing.list[i];
+      var statusBadge = '';
+      if (s.status) {
+        var cls = App.getStatusBadgeClass(s.status);
+        statusBadge = ' <span class="status-badge ' + cls + '" style="font-size:10px;padding:1px 4px">' + s.status + '</span>';
+      }
+      var daysLeft = 114 - s.daysSinceMate;
+      var urgency = daysLeft <= 7 ? ' class="urgent"' : daysLeft <= 14 ? ' class="soon"' : '';
+
+      html += '<tr' + urgency + '>';
+      html += '<td>' + s.sowNo + statusBadge + '</td>';
+      html += '<td>' + s.penNo + '</td>';
+      html += '<td>' + (s.matingDate || '').slice(5) + '</td>';
+      html += '<td>' + s.daysSinceMate + '日</td>';
+      html += '<td>' + (s.dueDate || '').slice(5) + '</td>';
+      html += '<td><button class="btn-move-sm" style="background:var(--success)" onclick="Farrowing.openRecordModal(\'' + s.sowNo + '\')">分娩</button> <button class="btn-move-sm" onclick="Farrowing.openMoveModal(\'' + s.sowNo + '\')">移動</button></td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  },
+
+  openMoveModal: function(sowNo) {
+    Farrowing.selectedSow = sowNo;
+    document.getElementById('farrow-move-sow-label').textContent = 'No.' + sowNo;
+    document.getElementById('farrow-move-pen').value = '';
+    App.setDateDefault('farrow-move-date');
+    App.showModal('farrow-move-modal');
+  },
+
+  openRecordModal: function(sowNo) {
+    Farrowing.recordSowNo = sowNo;
+    document.getElementById('farrow-record-sow-label').textContent = 'No.' + sowNo;
+    document.getElementById('farrow-record-total').value = '';
+    document.getElementById('farrow-record-still').value = '';
+    App.setDateDefault('farrow-record-date');
+    App.showModal('farrow-record-modal');
+  },
+
+  confirmRecord: function() {
+    var sowNo = Farrowing.recordSowNo;
+    var dateStr = document.getElementById('farrow-record-date').value;
+    var total = parseInt(document.getElementById('farrow-record-total').value) || 0;
+    var still = parseInt(document.getElementById('farrow-record-still').value) || 0;
+
+    if (total <= 0) { App.toast('総産子数を入力してください'); return; }
+
+    App.hideModal('farrow-record-modal');
+    App.toast('分娩を記録しました');
+    OfflineSync.enqueue('recordFarrowing', [sowNo, dateStr, total, still]);
+  },
+
+  // ほ育事故
+  accidentFormOpen: false,
+  accidentList: [],
+
+  toggleAccidentForm: function() {
+    Farrowing.accidentFormOpen = !Farrowing.accidentFormOpen;
+    document.getElementById('accident-form').style.display = Farrowing.accidentFormOpen ? 'block' : 'none';
+    document.getElementById('accident-toggle-label').textContent = Farrowing.accidentFormOpen ? '－ ほ育事故を記録' : '＋ ほ育事故を記録';
+    if (Farrowing.accidentFormOpen) App.setDateDefault('accident-date');
+  },
+
+  submitAccident: function() {
+    var sowNo = document.getElementById('accident-sow').value.trim();
+    var dateStr = document.getElementById('accident-date').value;
+    var count = parseInt(document.getElementById('accident-count').value) || 0;
+
+    if (!sowNo) { App.toast('母豚Noを入力してください'); return; }
+    if (count <= 0) { App.toast('頭数を入力してください'); return; }
+
+    OfflineSync.enqueue('recordNursingAccident', [sowNo, dateStr, count]);
+    document.getElementById('accident-sow').value = '';
+    document.getElementById('accident-count').value = '';
+    Farrowing.accidentList.unshift({ sowNo: sowNo, date: dateStr, count: count });
+    Farrowing.renderAccidents();
+    App.toast('ほ育事故を記録しました');
+  },
+
+  renderAccidents: function() {
+    var container = document.getElementById('accident-list');
+    if (Farrowing.accidentList.length === 0) { container.innerHTML = ''; return; }
+
+    var html = '<div class="section-title" style="margin-top:12px">ほ育事故履歴</div>';
+    html += '<table class="farrow-table"><thead><tr><th>日付</th><th>母豚No</th><th>頭数</th></tr></thead><tbody>';
+    for (var i = 0; i < Farrowing.accidentList.length; i++) {
+      var a = Farrowing.accidentList[i];
+      html += '<tr><td>' + (a.date || '').slice(5) + '</td><td>' + a.sowNo + '</td><td>' + a.count + '</td></tr>';
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  },
+
+  confirmMove: function() {
+    var sowNo = Farrowing.selectedSow;
+    var penNo = document.getElementById('farrow-move-pen').value.trim();
+    var dateStr = document.getElementById('farrow-move-date').value;
+    if (!penNo) { App.toast('移動先ペンNoを入力してください'); return; }
+
+    App.hideModal('farrow-move-modal');
+
+    for (var i = 0; i < Farrowing.list.length; i++) {
+      if (String(Farrowing.list[i].sowNo) === String(sowNo)) {
+        Farrowing.list[i].penNo = penNo;
+        break;
+      }
+    }
+    Farrowing.render();
+    App.toast('分娩舎移動を記録しました');
+    OfflineSync.enqueue('recordMovement', [sowNo, penNo, dateStr]);
+  }
+};

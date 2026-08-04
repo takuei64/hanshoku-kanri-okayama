@@ -1,0 +1,46 @@
+// 再発情確認画面
+
+var ReheatCheck = {
+  list: [],
+
+  /** 統合リスト（繁殖タブ）に描画を委譲 */
+  render: function() {
+    Breeding.render();
+  },
+
+  getBadgeClass: function(status) {
+    return App.getStatusBadgeClass(status);
+  },
+
+  addBTLocal: function(sowNo, bt, dateStr) {
+    sowNo = String(sowNo);
+    var updated = false;
+    for (var i = 0; i < ReheatCheck.list.length; i++) {
+      if (String(ReheatCheck.list[i].sowNo) === sowNo) {
+        if (!ReheatCheck.list[i].btHistory) ReheatCheck.list[i].btHistory = [];
+        ReheatCheck.list[i].btHistory.unshift({ date: dateStr, bt: bt });
+        ReheatCheck.list[i].btHistory.sort(function(a, b) {
+          return String(b.date || '').localeCompare(String(a.date || ''));
+        });
+        updated = true;
+        break;
+      }
+    }
+    if (updated && App.currentPage === 'breeding') ReheatCheck.render();
+  },
+
+  removeLocal: function(sowNo) {
+    sowNo = String(sowNo);
+    ReheatCheck.list = ReheatCheck.list.filter(function(s) { return String(s.sowNo) !== sowNo; });
+    ReheatCheck.render();
+  },
+
+  confirmDone: function(sowNo) {
+    var el = document.getElementById('reheat-' + sowNo);
+    if (el) el.style.opacity = '0.4';
+
+    ReheatCheck.removeLocal(sowNo);
+    App.toast('確認済 No.' + sowNo);
+    OfflineSync.enqueue('recordStatusChange', [sowNo, '再発情確認終了', App.today()]);
+  }
+};

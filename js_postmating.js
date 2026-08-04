@@ -1,0 +1,42 @@
+// 種付後チェック画面
+
+var PostMating = {
+  list: [],
+
+  /** 統合リスト（繁殖タブ）に描画を委譲 */
+  render: function() {
+    Breeding.render();
+  },
+
+  addBTLocal: function(sowNo, bt, dateStr) {
+    sowNo = String(sowNo);
+    var updated = false;
+    for (var i = 0; i < PostMating.list.length; i++) {
+      if (String(PostMating.list[i].sowNo) === sowNo) {
+        if (!PostMating.list[i].btHistory) PostMating.list[i].btHistory = [];
+        PostMating.list[i].btHistory.unshift({ date: dateStr, bt: bt });
+        PostMating.list[i].btHistory.sort(function(a, b) {
+          return String(b.date || '').localeCompare(String(a.date || ''));
+        });
+        updated = true;
+        break;
+      }
+    }
+    if (updated && App.currentPage === 'breeding') PostMating.render();
+  },
+
+  removeLocal: function(sowNo) {
+    sowNo = String(sowNo);
+    PostMating.list = PostMating.list.filter(function(s) { return String(s.sowNo) !== sowNo; });
+    PostMating.render();
+  },
+
+  confirmDone: function(sowNo) {
+    var el = document.getElementById('postmating-' + sowNo);
+    if (el) el.style.opacity = '0.4';
+
+    PostMating.removeLocal(sowNo);
+    App.toast('測定終了 No.' + sowNo);
+    OfflineSync.enqueue('recordStatusChange', [sowNo, '種付後測定終了', App.today()]);
+  }
+};

@@ -1,0 +1,26 @@
+{
+  "name": "繁殖管理",
+  "short_name": "繁殖管理",
+  "description": "圏外でも起動・入力できる繁殖管理アプリ",
+  "id": "/hanshoku-kanri/",
+  "start_url": "/hanshoku-kanri/",
+  "scope": "/hanshoku-kanri/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f0f2f5",
+  "theme_color": "#1a73e8",
+  "icons": [
+    {
+      "src": "/hanshoku-kanri/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/hanshoku-kanri/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,159 @@
+// ペン作業（子豚向け処置・母豚ワクチン）画面
+
+var PenTask = {
+  list: [],
+  farrowingTaskTypes: ['去勢', '豚熱1', '豚熱2', 'マイコサーコ', 'PRRS', 'パルボ', '日脳', '丹毒'],
+  breedingTaskTypes: ['AR1回目', 'AR2回目', 'レンサ球菌1回目', 'レンサ球菌2回目'],
+  taskTypes: ['去勢', '豚熱1', '豚熱2', 'マイコサーコ', 'PRRS', 'パルボ', '日脳', '丹毒', 'AR1回目', 'AR2回目', 'レンサ球菌1回目', 'レンサ球菌2回目'],
+  dueDays: {
+    '去勢': 7, '豚熱1': 14, '豚熱2': 21, 'マイコサーコ': 21, 'PRRS': 21,
+    'パルボ': 21, '日脳': 21, '丹毒': 21,
+    'AR1回目': 60, 'AR2回目': 90, 'レンサ球菌1回目': 60, 'レンサ球菌2回目': 90
+  },
+  selectedPen: null,
+
+  findPen: function(penNo) {
+    for (var i = 0; i < PenTask.list.length; i++) {
+      if (String(PenTask.list[i].penNo) === String(penNo)) return PenTask.list[i];
+    }
+    return null;
+  },
+
+  getTaskTypes: function(pen) {
+    if (pen && pen.taskTypes && pen.taskTypes.length) return pen.taskTypes;
+    return pen && pen.areaType === 'breeding' ? PenTask.breedingTaskTypes : PenTask.farrowingTaskTypes;
+  },
+
+  renderGroup: function(rows, areaType) {
+    var isBreeding = areaType === 'breeding';
+    var title = isBreeding ? '交配舎ペン' : '分娩舎ペン';
+    var note = isBreeding
+      ? '種付日からの日数、母豚ワクチン'
+      : '最新分娩日からの日齢、子豚作業＋母豚ワクチン';
+    var taskTypes = isBreeding ? PenTask.breedingTaskTypes : PenTask.farrowingTaskTypes;
+    var html = '<div class="loc-group-header">' + title + ' ' + rows.length + '件（' + note + '）</div>';
+    if (rows.length === 0) {
+      return html + '<div class="pentask-group-empty">現在の対象ペンはありません</div>';
+    }
+
+    html += '<table class="pentask-table">';
+    html += '<thead><tr>';
+    html += '<th>Pen</th>';
+    html += '<th>母豚</th>';
+    html += '<th>' + (isBreeding ? '種付後' : '日齢') + '</th>';
+    for (var i = 0; i < taskTypes.length; i++) {
+      html += '<th>' + taskTypes[i] + '</th>';
+    }
+    html += '</tr></thead><tbody>';
+    for (var r = 0; r < rows.length; r++) {
+      var p = rows[r];
+      html += '<tr onclick="PenTask.openModal(\'' + p.penNo + '\')">';
+      html += '<td><strong>' + p.penNo + '</strong></td>';
+      html += '<td style="font-size:11px">' + (p.sows || []).join(',') + '</td>';
+      var ageMark = !isBreeding && p.startSource && p.startSource !== 'farrow'
+        ? ' <span style="font-size:10px;color:var(--text-sub)" title="分娩記録なし: ' +
+          (p.startSource === 'estimated' ? '種付+114日推定' : '移動日基準') + '">(推)</span>'
+        : '';
+      html += '<td>' + p.ageDays + '日' + ageMark + '</td>';
+      for (var t = 0; t < taskTypes.length; t++) {
+        var task = p.tasks[taskTypes[t]] || { state: 'pending', date: '' };
+        var cls = 'pt-' + task.state;
+        var label = task.state === 'done' ? (task.date || '').slice(5) : (task.state === 'overdue' ? '✗' : '－');
+        html += '<td class="' + cls + '">' + label + '</td>';
+      }
+      html += '</tr>';
+    }
+    return html + '</tbody></table>';
+  },
+
+  render: function() {
+    var container = document.getElementById('pentask-list');
+    var farrowingRows = [];
+    var breedingRows = [];
+    var list = PenTask.list || [];
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      if (p.areaType === 'breeding') breedingRows.push(p);
+      else farrowingRows.push(p); // 旧キャッシュの行は分娩舎として扱う
+    }
+    container.innerHTML = PenTask.renderGroup(farrowingRows, 'farrowing') +
+      PenTask.renderGroup(breedingRows, 'breeding');
+  },
+
+  openModal: function(penNo) {
+    PenTask.selectedPen = penNo;
+    var pen = PenTask.findPen(penNo);
+    var dayText = pen && pen.areaType === 'breeding'
+      ? '種付後' + pen.ageDays + '日'
+      : '日齢' + (pen ? pen.ageDays : 0) + '日';
+    document.getElementById('pentask-pen-label').textContent = 'Pen ' + penNo +
+      (pen ? ' （' + dayText + '）' : '');
+
+    // チェックボックス生成（既に実施済みなら表示のみ、未済はチェック可）
+    var box = document.getElementById('pentask-checks');
+    var html = '';
+    var taskTypes = PenTask.getTaskTypes(pen);
+    for (var j = 0; j < taskTypes.length; j++) {
+      var type = taskTypes[j];
+      var t = (pen && pen.tasks && pen.tasks[type]) || {
+        state: 'pending', date: '', dueDay: PenTask.dueDays[type] || 21
+      };
+      var disabled = t.state === 'done';
+      var labelExtra = '';
+      if (t.state === 'done') {
+        labelExtra = ' <span style="color:var(--success);font-size:11px">実施済 ' + t.date +
+          ' <span class="pt-undo" onclick="event.stopPropagation();PenTask.undo(\'' + type + '\',\'' + (t.date || '') + '\')">取消</span></span>';
+      } else if (t.state === 'overdue') {
+        labelExtra = ' <span style="color:var(--danger);font-size:11px">期限超過</span>';
+      }
+      html += '<label class="pt-check-row">';
+      html += '<input type="checkbox" name="pentask-type" value="' + type + '"' + (disabled ? ' disabled' : '') + '>';
+      html += '<span style="margin-left:8px">' + type + '</span>';
+      html += labelExtra;
+      html += '</label>';
+    }
+    box.innerHTML = html;
+
+    App.setDateDefault('pentask-date');
+    App.showModal('pentask-modal');
+  },
+
+  submit: function() {
+    var penNo = PenTask.selectedPen;
+    var dateStr = document.getElementById('pentask-date').value;
+    var checks = document.querySelectorAll('input[name="pentask-type"]:checked');
+    var types = [];
+    for (var i = 0; i < checks.length; i++) types.push(checks[i].value);
+    if (types.length === 0) { App.toast('作業を1つ以上選択してください'); return; }
+
+    App.hideModal('pentask-modal');
+    for (var p = 0; p < PenTask.list.length; p++) {
+      if (String(PenTask.list[p].penNo) !== String(penNo)) continue;
+      for (var j = 0; j < types.length; j++) {
+        var oldTask = PenTask.list[p].tasks[types[j]] || {};
+        PenTask.list[p].tasks[types[j]] = { date: dateStr, state: 'done', dueDay: oldTask.dueDay || 0 };
+      }
+      break;
+    }
+    PenTask.render();
+    OfflineSync.enqueue('recordPenTasks', [penNo, types, dateStr]);
+    App.toast(types.length + '件記録しました');
+  },
+
+  undo: function(type, dateStr) {
+    var penNo = PenTask.selectedPen;
+    if (!confirm(type + ' (' + dateStr + ') を取り消しますか？')) return;
+    for (var i = 0; i < PenTask.list.length; i++) {
+      if (String(PenTask.list[i].penNo) !== String(penNo)) continue;
+      var t = PenTask.list[i].tasks[type];
+      var dueDay = t ? t.dueDay : 21;
+      var newState = PenTask.list[i].ageDays >= dueDay ? 'overdue' : 'pending';
+      PenTask.list[i].tasks[type] = { date: '', state: newState, dueDay: dueDay };
+      break;
+    }
+    PenTask.openModal(penNo);
+    PenTask.render();
+    OfflineSync.enqueue('deletePenTask', [penNo, type, dateStr]);
+    App.toast('取り消しました');
+  }
+};

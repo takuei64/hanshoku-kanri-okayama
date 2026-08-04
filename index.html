@@ -1,42 +1,333 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1a73e8">
-<title>繁殖管理</title>
-<link rel="manifest" href="manifest.json">
-<link rel="icon" href="icon-192.png">
-<link rel="apple-touch-icon" href="icon-192.png">
-<style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    overflow: hidden;
-    background: #f8f9fa;
-  }
-  iframe {
-    display: block;
-    width: 100%;
-    height: 100dvh;
-    border: 0;
-  }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1a73e8">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>繁殖管理</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="stylesheet" href="./breeding.css">
+  <link rel="stylesheet" href="./pwa.css">
+  <script src="./pwa-runtime.js"></script>
 </head>
 <body>
-<iframe id="app" src="https://script.google.com/macros/s/AKfycbwIZb3Zyxuu7Y-9xfTC0Chmvjuv1qX1dKWwuCj2_iH5ilIpT1gGBBskcjNg_sqk85Mk/exec" allow="fullscreen"></iframe>
+
+<!-- ヘッダー -->
+<div class="header">
+  <button class="sync-status sync-ok" id="sync-status" onclick="OfflineSync.showStatus()" title="すべての記録を送信済みです">同期済</button>
+  <span id="header-title">繁殖管理</span>
+  <button class="refresh-btn" onclick="App.refresh()" title="更新">&#8635;</button>
+</div>
+
+<!-- メインコンテンツ -->
+<div class="main">
+
+  <!-- 画面1: 繁殖管理（移動記録統合） -->
+  <div id="page-breeding" class="page active">
+    <!-- 移動記録フォーム（折りたたみ） -->
+    <div class="card" id="move-section">
+      <div class="section-toggle" onclick="Breeding.toggleMoveForm()">
+        <span id="move-toggle-label">＋ 移動記録を追加</span>
+      </div>
+      <div id="move-form" style="display:none">
+        <div class="form-row">
+          <div class="form-group" style="flex:1">
+            <label>日付</label>
+            <input type="date" id="move-date">
+          </div>
+          <div class="form-group" style="flex:1">
+            <label>母豚No</label>
+            <input type="number" id="move-sow" inputmode="numeric" placeholder="422">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>ペンNo</label>
+          <input type="number" id="move-pen" inputmode="numeric" placeholder="ペン番号">
+        </div>
+        <button class="submit-btn" id="move-submit" onclick="Breeding.submitMove()">移動を記録</button>
+      </div>
+    </div>
+
+    <!-- 朝チェック一覧 -->
+    <div id="breeding-list"></div>
+  </div>
+
+  <!-- 種付後チェック・再発情確認は画面1の統合リストに表示 -->
+
+  <!-- 画面4: 妊娠鑑定 -->
+  <div id="page-pregcheck" class="page">
+    <div id="pregcheck-list"></div>
+  </div>
+
+  <!-- 画面5: 分娩舎移動 -->
+  <div id="page-farrowing" class="page">
+    <div id="farrowing-list"></div>
+
+    <!-- ほ育事故記録フォーム（折りたたみ） -->
+    <div class="card" id="accident-section" style="margin-top:8px">
+      <div class="section-toggle" onclick="Farrowing.toggleAccidentForm()">
+        <span id="accident-toggle-label">＋ ほ育事故を記録</span>
+      </div>
+      <div id="accident-form" style="display:none">
+        <div class="form-row">
+          <div class="form-group" style="flex:1">
+            <label>日付</label>
+            <input type="date" id="accident-date">
+          </div>
+          <div class="form-group" style="flex:1">
+            <label>母豚No</label>
+            <input type="number" id="accident-sow" inputmode="numeric" placeholder="422">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>頭数</label>
+          <input type="number" id="accident-count" inputmode="numeric" placeholder="事故頭数">
+        </div>
+        <button class="submit-btn" id="accident-submit" onclick="Farrowing.submitAccident()">事故を記録</button>
+      </div>
+    </div>
+
+    <!-- ほ育事故履歴 -->
+    <div id="accident-list"></div>
+  </div>
+
+  <!-- 分娩舎移動モーダル -->
+  <div class="modal-overlay" id="farrow-move-modal">
+    <div class="modal-content" style="position:relative">
+      <button class="modal-close" onclick="App.hideModal('farrow-move-modal')">&times;</button>
+      <div class="modal-title">分娩舎移動 <span id="farrow-move-sow-label"></span></div>
+      <div class="form-group">
+        <label>日付</label>
+        <input type="date" id="farrow-move-date">
+      </div>
+      <div class="form-group">
+        <label>移動先ペンNo</label>
+        <input type="number" id="farrow-move-pen" inputmode="numeric" placeholder="ペン番号">
+      </div>
+      <button class="submit-btn" onclick="Farrowing.confirmMove()">移動を記録</button>
+    </div>
+  </div>
+
+  <!-- 分娩記録モーダル -->
+  <div class="modal-overlay" id="farrow-record-modal">
+    <div class="modal-content" style="position:relative">
+      <button class="modal-close" onclick="App.hideModal('farrow-record-modal')">&times;</button>
+      <div class="modal-title">分娩記録 <span id="farrow-record-sow-label"></span></div>
+      <div class="form-group">
+        <label>分娩日</label>
+        <input type="date" id="farrow-record-date">
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <label>総産子数</label>
+          <input type="number" id="farrow-record-total" inputmode="numeric" placeholder="0">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label>死産数</label>
+          <input type="number" id="farrow-record-still" inputmode="numeric" placeholder="0">
+        </div>
+      </div>
+      <button class="submit-btn" onclick="Farrowing.confirmRecord()">分娩を記録</button>
+    </div>
+  </div>
+
+  <!-- 現在地 アクションシート -->
+  <div class="modal-overlay" id="loc-action-sheet">
+    <div class="modal-content" style="position:relative">
+      <div class="modal-title" id="loc-action-sow-label" style="margin-bottom:20px"></div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button class="submit-btn" style="background:#5f6368" onclick="SowLocation.actionCard()">個体情報</button>
+        <button class="submit-btn" style="background:#d93025" onclick="SowLocation.actionMating()">種付登録</button>
+        <button class="submit-btn" style="background:var(--success)" onclick="SowLocation.actionFarrowing()">分娩登録</button>
+        <button class="submit-btn" style="background:#9b59b6" onclick="SowLocation.actionPenTask()">ペン作業記録</button>
+        <button class="submit-btn" style="background:var(--danger)" onclick="SowLocation.actionDeath()">死亡登録</button>
+        <button class="submit-btn" style="background:#7f1d1d" onclick="SowLocation.actionRetire()">廃用</button>
+        <button class="submit-btn" style="background:#e0e0e0;color:#333;margin-top:4px" onclick="App.hideModal('loc-action-sheet')">キャンセル</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 死亡・廃用登録モーダル -->
+  <div class="modal-overlay" id="death-modal">
+    <div class="modal-content" style="position:relative">
+      <button class="modal-close" onclick="App.hideModal('death-modal')">&times;</button>
+      <div class="modal-title">子豚死亡登録 <span id="death-sow-label"></span></div>
+      <div class="form-group">
+        <label>日付</label>
+        <input type="date" id="death-date">
+      </div>
+      <div class="form-group">
+        <label>死亡頭数</label>
+        <input type="number" id="death-count" inputmode="numeric" placeholder="頭数">
+      </div>
+      <button class="submit-btn" style="background:var(--danger)" id="death-submit" onclick="SowLocation.submitDeath()">登録する</button>
+    </div>
+  </div>
+
+  <!-- 現在地 移動モーダル -->
+  <div class="modal-overlay" id="loc-move-modal">
+    <div class="modal-content" style="position:relative">
+      <button class="modal-close" onclick="App.hideModal('loc-move-modal')">&times;</button>
+      <div class="modal-title">移動記録 <span id="loc-move-sow-label"></span></div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1">
+          <label>日付</label>
+          <input type="date" id="loc-move-date">
+        </div>
+        <div class="form-group" style="flex:1">
+          <label>移動先ペンNo</label>
+          <input type="number" id="loc-move-pen" inputmode="numeric" placeholder="ペン番号">
+        </div>
+      </div>
+      <button class="submit-btn" onclick="SowLocation.submitMove()">移動を記録</button>
+    </div>
+  </div>
+
+  <!-- 画面6: 母豚現在地一覧 -->
+  <div id="page-location" class="page">
+    <div class="search-bar">
+      <input type="text" id="location-search" placeholder="母豚No検索" oninput="SowLocation.filter()">
+    </div>
+    <div id="location-count" style="font-size:12px;color:var(--text-sub);padding:4px 8px"></div>
+    <div id="location-list"></div>
+  </div>
+
+  <!-- 画面7: ペン作業（子豚向けワクチン・処置） -->
+  <div id="page-pentask" class="page">
+    <div id="pentask-list"></div>
+  </div>
+
+  <!-- ペン作業記録モーダル -->
+  <div class="modal-overlay" id="pentask-modal">
+    <div class="modal-content" style="position:relative">
+      <button class="modal-close" onclick="App.hideModal('pentask-modal')">&times;</button>
+      <div class="modal-title">作業記録 <span id="pentask-pen-label"></span></div>
+      <div class="form-group">
+        <label>実施日</label>
+        <input type="date" id="pentask-date">
+      </div>
+      <div id="pentask-checks" style="margin-bottom:12px"></div>
+      <button class="submit-btn" onclick="PenTask.submit()">記録する</button>
+    </div>
+  </div>
+
+  <!-- 画面8: 母豚個体カード -->
+  <div id="page-sowcard" class="page">
+    <div class="search-bar">
+      <input type="number" id="card-search-input" inputmode="numeric" placeholder="母豚番号">
+      <button onclick="SowCard.search()">検索</button>
+    </div>
+    <div id="card-result">
+      <div class="empty-state">
+        <div>母豚番号を入力して検索</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- BT値入力モーダル -->
+<div class="modal-overlay modal-center" id="bt-modal">
+  <div class="modal-content" style="position:relative">
+    <button class="modal-close" onclick="App.hideModal('bt-modal')">&times;</button>
+    <div class="modal-title">BT値入力 <span id="bt-sow-label"></span></div>
+    <div class="form-row">
+      <div class="form-group" style="flex:1">
+        <label>日付</label>
+        <input type="date" id="bt-date">
+      </div>
+      <div class="form-group" style="flex:1">
+        <label>BT値</label>
+        <input type="number" id="bt-value" inputmode="decimal" step="0.1" placeholder="例: 38.5">
+      </div>
+    </div>
+    <button class="submit-btn" onclick="Breeding.submitBT()">記録する</button>
+  </div>
+</div>
+
+<!-- 種付登録モーダル（現在地・個体タブ用） -->
+<div class="modal-overlay" id="mating-modal">
+  <div class="modal-content" style="position:relative">
+    <button class="modal-close" onclick="App.hideModal('mating-modal')">&times;</button>
+    <div class="modal-title">種付登録 <span id="mating-sow-label"></span></div>
+    <div class="form-group">
+      <label>日付</label>
+      <input type="date" id="mating-date">
+    </div>
+    <button class="submit-btn" onclick="Mating.submit()">記録する</button>
+  </div>
+</div>
+
+<!-- 種付・ステータス変更モーダル -->
+<div class="modal-overlay" id="status-modal">
+  <div class="modal-content" style="position:relative">
+    <button class="modal-close" onclick="App.hideModal('status-modal')">&times;</button>
+    <div class="modal-title" id="status-modal-title"></div>
+    <div class="form-group">
+      <label>日付</label>
+      <input type="date" id="status-date">
+    </div>
+    <p id="status-modal-desc" style="font-size:13px;color:var(--text-sub);margin-bottom:16px;text-align:center"></p>
+    <button class="submit-btn" id="status-modal-submit" onclick="Breeding.confirmStatus()">記録する</button>
+  </div>
+</div>
+
+<!-- タブバー（5タブ: 繁殖に種後・再発を統合） -->
+<div class="tab-bar">
+  <button data-page="breeding" class="active">
+    <span class="tab-icon">&#9776;</span>
+    <span>繁殖</span>
+  </button>
+  <button data-page="pregcheck">
+    <span class="tab-icon">&#9745;</span>
+    <span>妊鑑</span>
+  </button>
+  <button data-page="farrowing">
+    <span class="tab-icon">&#8962;</span>
+    <span>分娩</span>
+  </button>
+  <button data-page="location">
+    <span class="tab-icon">&#9960;</span>
+    <span>現在地</span>
+  </button>
+  <button data-page="pentask">
+    <span class="tab-icon">&#9876;</span>
+    <span>作業</span>
+  </button>
+</div>
+
+<!-- ローディング -->
+<div class="loading" id="loading">
+  <div class="spinner"></div>
+</div>
+
+<!-- トースト -->
+<div class="toast" id="toast"></div>
+
 <script>
-  // ログイン画面からの遷移要求を受けて、トップページは動かさず iframe だけ差し替える。
-  // （トップレベルで script.google.com を開くとGoogleの警告バナーが出るため）
-  window.addEventListener('message', function(e) {
-    var d = e.data;
-    if (d && d.type === 'breeding-navigate' && typeof d.url === 'string' &&
-        d.url.indexOf('https://script.google.com/') === 0) {
-      if (e.source) e.source.postMessage({ type: 'breeding-wrapper-ack' }, '*');
-      document.getElementById('app').src = d.url;
-    }
-  });
+var __initialData = PwaStore.loadInitialData();
+var __authToken = PwaAuth.loadToken();
 </script>
+<script src="./js_offline.js"></script>
+<script src="./js_app.js"></script>
+<script src="./js_breeding.js"></script>
+<script src="./js_postmating.js"></script>
+<script src="./js_reheatcheck.js"></script>
+<script src="./js_pregcheck.js"></script>
+<script src="./js_farrowing.js"></script>
+<script src="./js_sow.js"></script>
+<script src="./js_pentask.js"></script>
+<script src="./pwa-hooks.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('./sw.js').catch(function() {});
+  });
+}
+</script>
+
 </body>
 </html>
