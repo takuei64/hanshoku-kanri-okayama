@@ -13,6 +13,7 @@ var OfflineSync = {
   init: function() {
     if (OfflineSync.initialized) return;
     OfflineSync.queue = OfflineSync.loadQueue();
+    OfflineSync.discardAlreadyDeletedFailures();
     OfflineSync.initialized = true;
 
     window.addEventListener('online', function() {
@@ -24,6 +25,7 @@ var OfflineSync = {
     window.addEventListener('storage', function(e) {
       if (e.key !== OfflineSync.storageKey || OfflineSync.sending) return;
       OfflineSync.queue = OfflineSync.loadQueue();
+      OfflineSync.discardAlreadyDeletedFailures();
       OfflineSync.updateStatus();
       OfflineSync.process();
     });
@@ -119,6 +121,43 @@ var OfflineSync = {
 
   isOnline: function() {
     return typeof navigator.onLine !== 'boolean' || navigator.onLine;
+  },
+
+  isAlreadyDeletedFailure: function(op, error) {
+    var deleteTypes = {
+      deletePenTask: true,
+      deleteBreedingRecord: true,
+      deleteMatingRecord: true,
+      deleteFarrowingRecord: true,
+      deleteWeaningRecord: true
+    };
+    if (!op || !deleteTypes[op.type]) return false;
+
+    var missingErrors = {
+      '該当する種付記録が見つかりません': true,
+      '該当する分娩記録が見つかりません': true,
+      '該当する離乳記録が見つかりません': true,
+      '該当する記録が見つかりません': true
+    };
+    return !!missingErrors[String(error || '').trim()];
+  },
+
+  discardAlreadyDeletedFailures: function() {
+    var kept = [];
+    var changed = false;
+    for (var i = 0; i < OfflineSync.queue.length; i++) {
+      var op = OfflineSync.queue[i];
+      if (op.state === 'failed' && OfflineSync.isAlreadyDeletedFailure(op, op.error)) {
+        delete OfflineSync.callbacks[op.id];
+        changed = true;
+      } else {
+        kept.push(op);
+      }
+    }
+    if (!changed) return false;
+    OfflineSync.queue = kept;
+    OfflineSync.saveQueue();
+    return true;
   },
 
   updateStatus: function() {
@@ -248,7 +287,7 @@ var OfflineSync = {
       .withSuccessHandler(function(res) {
         if (OfflineSync.activeSendToken !== sendToken) return;
         clearTimeout(timeoutId);
-        if (res && res.success) {
+        if ((res && res.success) || OfflineSync.isAlreadyDeletedFailure(op, res && res.error)) {
           OfflineSync.completeOperation(op, sendToken, res);
         } else if (res && res.retryable) {
           OfflineSync.retryOperation(op, sendToken, res.error || '一時的な保存エラー');

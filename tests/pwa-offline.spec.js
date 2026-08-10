@@ -58,11 +58,11 @@ test('初期同期後は圏外再起動とBT削除キュー保持ができる', 
   await page.evaluate(() => navigator.serviceWorker.ready);
   const cacheResult = await page.evaluate(async () => {
     const names = await caches.keys();
-    const cache = await caches.open('breeding-okayama-pwa-v2');
+    const cache = await caches.open('breeding-okayama-pwa-v3');
     const keys = await cache.keys();
     return { names, urls: keys.map(item => new URL(item.url).pathname) };
   });
-  expect(cacheResult.names).toContain('breeding-okayama-pwa-v2');
+  expect(cacheResult.names).toContain('breeding-okayama-pwa-v3');
   expect(cacheResult.urls).toContain('/hanshoku-kanri-okayama/index.html');
   expect(cacheResult.urls).toContain('/hanshoku-kanri-okayama/pwa-runtime.js');
   expect(cacheResult.urls).toContain('/hanshoku-kanri-okayama/icon-512.png');
@@ -169,5 +169,84 @@ test('圏外でも離乳頭数と繁殖舎移動を一括登録して再起動�
   await page.locator('[data-page="location"]').click();
   await expect(page.locator('#location-list')).toContainText('No.901');
   await expect(page.locator('#location-list')).toContainText('Pen 12');
+  await context.close();
+});
+
+test('既に削除済みの種付削除キューは起動時に自動整理する', async ({ browser }) => {
+  const context = await browser.newContext({ serviceWorkers: 'allow' });
+  await context.addInitScript(({ namespace, snapshot }) => {
+    localStorage.setItem(namespace + ':auth-token', 'test-token');
+    localStorage.setItem(namespace + ':data-snapshot', JSON.stringify(snapshot));
+    localStorage.setItem(namespace + ':data-snapshot-time', new Date().toISOString());
+    localStorage.setItem(namespace + ':offline-queue', JSON.stringify([{
+      id: 'delete-mating-70-old',
+      type: 'deleteMatingRecord',
+      args: ['70', '2026-07-01'],
+      createdAt: '2026-08-01T00:00:00.000Z',
+      attempts: 1,
+      nextAttemptAt: 0,
+      state: 'failed',
+      error: '該当する種付記録が見つかりません'
+    }]));
+  }, { namespace, snapshot });
+
+  await context.route('https://script.google.com/**', async route => {
+    const requestUrl = new URL(route.request().url());
+    const requestId = requestUrl.searchParams.get('requestId') || 'request';
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/javascript; charset=utf-8',
+      body: 'PwaJsonp.handle(' + JSON.stringify({ requestId, ok: true, result: snapshot, error: '' }) + ');'
+    });
+  });
+
+  const page = await context.newPage();
+  await page.goto(appUrl);
+  await expect(page.locator('#sync-status')).toContainText('同期済');
+  const queue = await page.evaluate(namespace => {
+    return JSON.parse(localStorage.getItem(namespace + ':offline-queue') || '[]');
+  }, namespace);
+  expect(queue).toEqual([]);
+  await context.close();
+});
+
+test('送信先で既に削除済みの削除命令はエラーに残さない', async ({ browser }) => {
+  const context = await browser.newContext({ serviceWorkers: 'allow' });
+  await context.addInitScript(({ namespace, snapshot }) => {
+    localStorage.setItem(namespace + ':auth-token', 'test-token');
+    localStorage.setItem(namespace + ':data-snapshot', JSON.stringify(snapshot));
+    localStorage.setItem(namespace + ':data-snapshot-time', new Date().toISOString());
+    localStorage.setItem(namespace + ':offline-queue', JSON.stringify([{
+      id: 'delete-mating-70-pending',
+      type: 'deleteMatingRecord',
+      args: ['70', '2026-07-01'],
+      createdAt: '2026-08-01T00:00:00.000Z',
+      attempts: 0,
+      nextAttemptAt: 0,
+      state: 'pending',
+      error: ''
+    }]));
+  }, { namespace, snapshot });
+
+  await context.route('https://script.google.com/**', async route => {
+    const requestUrl = new URL(route.request().url());
+    const requestId = requestUrl.searchParams.get('requestId') || 'request';
+    const method = requestUrl.searchParams.get('method');
+    const result = method === 'executeQueuedOperation'
+      ? { success: false, error: '該当する種付記録が見つかりません', retryable: false }
+      : snapshot;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/javascript; charset=utf-8',
+      body: 'PwaJsonp.handle(' + JSON.stringify({ requestId, ok: true, result, error: '' }) + ');'
+    });
+  });
+
+  const page = await context.newPage();
+  await page.goto(appUrl);
+  await expect.poll(async () => page.evaluate(namespace => {
+    return JSON.parse(localStorage.getItem(namespace + ':offline-queue') || '[]').length;
+  }, namespace)).toBe(0);
+  await expect(page.locator('#sync-status')).toContainText('同期済');
   await context.close();
 });
