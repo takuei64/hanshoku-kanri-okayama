@@ -35,6 +35,7 @@ function executeQueuedOperation(operation, authToken) {
     if (!result || typeof result !== 'object') {
       result = { success: false, error: '保存結果を確認できませんでした' };
     }
+    result = normalizeAlreadyDeletedQueuedResult_(operation, result);
     result.operationId = operation.id;
 
     if (result.success) {
@@ -49,6 +50,16 @@ function executeQueuedOperation(operation, authToken) {
   } finally {
     if (locked) userLock.releaseLock();
   }
+}
+
+function normalizeAlreadyDeletedQueuedResult_(operation, result) {
+  if (operation &&
+      operation.type === 'deleteMatingRecord' &&
+      result && result.success === false &&
+      String(result.error || '').trim() === '該当する種付記録が見つかりません') {
+    return { success: true, alreadyDeleted: true };
+  }
+  return result;
 }
 
 function validateQueuedOperation_(operation) {
