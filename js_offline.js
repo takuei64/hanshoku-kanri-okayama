@@ -124,22 +124,9 @@ var OfflineSync = {
   },
 
   isAlreadyDeletedFailure: function(op, error) {
-    var deleteTypes = {
-      deletePenTask: true,
-      deleteBreedingRecord: true,
-      deleteMatingRecord: true,
-      deleteFarrowingRecord: true,
-      deleteWeaningRecord: true
-    };
-    if (!op || !deleteTypes[op.type]) return false;
-
-    var missingErrors = {
-      '該当する種付記録が見つかりません': true,
-      '該当する分娩記録が見つかりません': true,
-      '該当する離乳記録が見つかりません': true,
-      '該当する記録が見つかりません': true
-    };
-    return !!missingErrors[String(error || '').trim()];
+    return !!op &&
+      op.type === 'deleteMatingRecord' &&
+      String(error || '').trim() === '該当する種付記録が見つかりません';
   },
 
   discardAlreadyDeletedFailures: function() {
