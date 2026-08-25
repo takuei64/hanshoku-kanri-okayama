@@ -17,7 +17,7 @@ var SowLocation = {
     var filtered = SowLocation.list;
     if (query) {
       filtered = SowLocation.list.filter(function(s) {
-        return String(s.sowNo).indexOf(query) >= 0 || String(s.penNo).indexOf(query) >= 0;
+        return String(s.sowNo).trim() === query;
       });
     }
 
@@ -55,6 +55,11 @@ var SowLocation = {
   },
 
   openActionSheet: function(sowNo) {
+    var query = (document.getElementById('location-search').value || '').trim();
+    if (query && String(sowNo).trim() !== query) {
+      App.toast('検索した母豚Noと選択した母豚Noが一致しません');
+      return;
+    }
     SowLocation.actionSowNo = sowNo;
     document.getElementById('loc-action-sow-label').textContent = 'No.' + sowNo;
     App.showModal('loc-action-sheet');
@@ -202,6 +207,10 @@ var SowLocation = {
 
 // === 画面3: 個体カード ===
 var SowCard = {
+  currentData: null,
+  editIndex: -1,
+  editOriginal: null,
+
   search: function(sowNo) {
     if (!sowNo) {
       sowNo = parseInt(document.getElementById('card-search-input').value);
@@ -230,6 +239,7 @@ var SowCard = {
   },
 
   render: function(data) {
+    SowCard.currentData = data;
     var c = document.getElementById('card-result');
     var html = '';
 
@@ -255,27 +265,163 @@ var SowCard = {
       for (var i = 0; i < tl.length; i++) {
         var t = tl[i];
         var color = eventColors[t.event] || '#5f6368';
-        html += '<div class="tl-item">';
+        var editable = SowCard.isEditable(t);
+        html += '<div class="tl-item' + (editable ? ' tl-editable' : '') + '"' +
+          (editable ? ' onclick="SowCard.openEdit(' + i + ')"' : '') + '>';
         html += '<div class="tl-date">' + (t.date || '') + '</div>';
         html += '<span class="tl-event" style="background:' + color + '">' + t.event + '</span>';
         if (t.detail) html += '<span class="tl-detail">' + t.detail + '</span>';
+        if (editable) html += '<span class="tl-edit-hint">修正</span>';
         if (t.event === '繁殖管理') {
-          html += '<span class="tl-delete" onclick="SowCard.confirmDelete(\'' + data.info.sowNo + '\',\'' + (t.date || '') + '\',\'' + (t._penNo || '') + '\',\'' + (t._bt || '') + '\',\'' + (t._status || '') + '\')">&times;</span>';
+          html += '<span class="tl-delete" onclick="event.stopPropagation();SowCard.confirmDelete(\'' + data.info.sowNo + '\',\'' + (t.date || '') + '\',\'' + (t._penNo || '') + '\',\'' + (t._bt || '') + '\',\'' + (t._status || '') + '\')">&times;</span>';
         }
         if (t.event === '種付') {
-          html += '<span class="tl-delete" onclick="SowCard.confirmDeleteMating(\'' + data.info.sowNo + '\',\'' + (t.date || '') + '\')">&times;</span>';
+          html += '<span class="tl-delete" onclick="event.stopPropagation();SowCard.confirmDeleteMating(\'' + data.info.sowNo + '\',\'' + (t.date || '') + '\')">&times;</span>';
         }
         if (t.event === '分娩') {
-          html += '<span class="tl-delete" onclick="SowCard.confirmDeleteFarrowing(\'' + data.info.sowNo + '\',\'' + (t.date || '') + '\',\'' + (t._total || '') + '\',\'' + (t._still || '') + '\')">&times;</span>';
+          html += '<span class="tl-delete" onclick="event.stopPropagation();SowCard.confirmDeleteFarrowing(\'' + data.info.sowNo + '\',\'' + (t.date || '') + '\',\'' + (t._total || '') + '\',\'' + (t._still || '') + '\')">&times;</span>';
         }
         if (t.event === '離乳') {
-          html += '<span class="tl-delete" onclick="SowCard.confirmDeleteWeaning(\'' + data.info.sowNo + '\',\'' + (t.date || '') + '\',\'' + (t._weaned || '') + '\',\'' + (t._deaths || '') + '\')">&times;</span>';
+          html += '<span class="tl-delete" onclick="event.stopPropagation();SowCard.confirmDeleteWeaning(\'' + data.info.sowNo + '\',\'' + (t.date || '') + '\',\'' + (t._weaned || '') + '\',\'' + (t._deaths || '') + '\')">&times;</span>';
         }
         html += '</div>';
       }
     }
 
     c.innerHTML = html;
+  },
+
+  isEditable: function(record) {
+    if (!record) return false;
+    if (record.event === '種付' || record.event === '分娩' || record.event === '離乳') return true;
+    return record.event === '繁殖管理' &&
+      record._bt !== '' && record._bt !== null && record._bt !== undefined;
+  },
+
+  openEdit: function(index) {
+    var data = SowCard.currentData;
+    var record = data && data.timeline ? data.timeline[index] : null;
+    if (!SowCard.isEditable(record)) return;
+
+    SowCard.editIndex = index;
+    SowCard.editOriginal = JSON.parse(JSON.stringify(record));
+    var label = record.event === '繁殖管理' ? 'BT値' : record.event;
+    document.getElementById('history-edit-title').textContent = label + 'を修正';
+    document.getElementById('history-edit-sow').textContent = '母豚No.' + data.info.sowNo;
+
+    var html = '<div class="form-group"><label>日付</label>' +
+      '<input type="date" id="history-edit-date" value="' + (record.date || '') + '"></div>';
+    if (record.event === '分娩') {
+      html += '<div class="form-row">' +
+        '<div class="form-group" style="flex:1"><label>総産子数</label><input type="number" id="history-edit-total" inputmode="numeric" min="1" step="1" value="' + record._total + '"></div>' +
+        '<div class="form-group" style="flex:1"><label>死産数</label><input type="number" id="history-edit-still" inputmode="numeric" min="0" step="1" value="' + record._still + '"></div>' +
+        '</div>';
+    } else if (record.event === '離乳') {
+      html += '<div class="form-row">' +
+        '<div class="form-group" style="flex:1"><label>離乳頭数</label><input type="number" id="history-edit-weaned" inputmode="numeric" min="0" step="1" value="' + record._weaned + '"></div>' +
+        '<div class="form-group" style="flex:1"><label>死亡数</label><input type="number" id="history-edit-deaths" inputmode="numeric" min="0" step="1" value="' + record._deaths + '"></div>' +
+        '</div>';
+    } else if (record.event === '繁殖管理') {
+      html += '<div class="form-group"><label>BT値</label>' +
+        '<input type="number" id="history-edit-bt" inputmode="decimal" step="0.1" value="' + record._bt + '"></div>';
+    }
+    document.getElementById('history-edit-fields').innerHTML = html;
+    App.showModal('history-edit-modal');
+  },
+
+  readInteger: function(id, label, minimum) {
+    var value = (document.getElementById(id).value || '').trim();
+    var number = Number(value);
+    if (value === '' || !isFinite(number) || Math.floor(number) !== number || number < minimum) {
+      App.toast(label + 'を確認してください');
+      return null;
+    }
+    return number;
+  },
+
+  editSummary: function(record) {
+    if (record.event === '分娩') {
+      return record.date + '／総産子 ' + record._total + '／死産 ' + record._still;
+    }
+    if (record.event === '離乳') {
+      return record.date + '／離乳 ' + record._weaned + '／死亡 ' + record._deaths;
+    }
+    if (record.event === '繁殖管理') return record.date + '／BT ' + record._bt;
+    return record.date;
+  },
+
+  submitEdit: function() {
+    var data = SowCard.currentData;
+    var original = SowCard.editOriginal;
+    if (!data || !original || SowCard.editIndex < 0) return;
+
+    var sowNo = String(data.info.sowNo);
+    var newDate = document.getElementById('history-edit-date').value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) { App.toast('日付を確認してください'); return; }
+
+    var updated = JSON.parse(JSON.stringify(original));
+    updated.date = newDate;
+    var operationType = '';
+    var operationArgs = [];
+    var label = original.event === '繁殖管理' ? 'BT値' : original.event;
+
+    if (original.event === '種付') {
+      operationType = 'updateMatingRecord';
+      operationArgs = [sowNo, original.date, newDate];
+    } else if (original.event === '分娩') {
+      var total = SowCard.readInteger('history-edit-total', '総産子数', 1);
+      if (total === null) return;
+      var still = SowCard.readInteger('history-edit-still', '死産数', 0);
+      if (still === null) return;
+      if (still > total) { App.toast('死産数は総産子数以下で入力してください'); return; }
+      updated._total = total;
+      updated._still = still;
+      updated.detail = '総産子:' + total + ' 死産:' + still;
+      operationType = 'updateFarrowingRecord';
+      operationArgs = [sowNo, original.date, original._total, original._still, newDate, total, still];
+    } else if (original.event === '離乳') {
+      var weaned = SowCard.readInteger('history-edit-weaned', '離乳頭数', 0);
+      if (weaned === null) return;
+      var deaths = SowCard.readInteger('history-edit-deaths', '死亡数', 0);
+      if (deaths === null) return;
+      updated._weaned = weaned;
+      updated._deaths = deaths;
+      updated.detail = '離乳頭数:' + weaned + ' 死亡:' + deaths;
+      operationType = 'updateWeaningRecord';
+      operationArgs = [sowNo, original.date, original._weaned, original._deaths, newDate, weaned, deaths];
+    } else if (original.event === '繁殖管理') {
+      var btText = (document.getElementById('history-edit-bt').value || '').trim();
+      var bt = Number(btText);
+      if (btText === '' || !isFinite(bt) || bt <= 0) { App.toast('BT値を確認してください'); return; }
+      updated._bt = bt;
+      var details = [];
+      if (updated._penNo) details.push('Pen ' + updated._penNo);
+      details.push('BT ' + bt);
+      if (updated._status) details.push(updated._status);
+      updated.detail = details.join(' / ');
+      operationType = 'updateBTRecord';
+      operationArgs = [sowNo, original.date, original._bt, newDate, bt];
+    } else {
+      return;
+    }
+
+    if (!confirm(
+      'No.' + sowNo + ' の' + label + 'を修正しますか？\n' +
+      '変更前: ' + SowCard.editSummary(original) + '\n' +
+      '変更後: ' + SowCard.editSummary(updated)
+    )) return;
+
+    App.hideModal('history-edit-modal');
+    data.timeline[SowCard.editIndex] = updated;
+    data.timeline.sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); });
+    if (typeof PwaStore !== 'undefined') PwaStore.saveCard(sowNo, data);
+    SowCard.render(data);
+    OfflineSync.enqueue(operationType, operationArgs, {
+      onSuccess: function() { SowCard.refreshIfVisible(sowNo); }
+    });
+    SowCard.editIndex = -1;
+    SowCard.editOriginal = null;
+    App.toast(label + 'を修正しました');
   },
 
   refreshIfVisible: function(sowNo) {

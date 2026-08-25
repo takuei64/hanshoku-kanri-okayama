@@ -253,6 +253,17 @@
 
 </div>
 
+<!-- 個体履歴 修正モーダル -->
+<div class="modal-overlay" id="history-edit-modal">
+  <div class="modal-content" style="position:relative">
+    <button class="modal-close" onclick="App.hideModal('history-edit-modal')">&times;</button>
+    <div class="modal-title" id="history-edit-title">履歴を修正</div>
+    <div id="history-edit-sow" style="font-size:13px;color:var(--text-sub);margin-bottom:12px;text-align:center"></div>
+    <div id="history-edit-fields"></div>
+    <button class="submit-btn" id="history-edit-submit" onclick="SowCard.submitEdit()">修正を保存</button>
+  </div>
+</div>
+
 <!-- BT値入力モーダル -->
 <div class="modal-overlay modal-center" id="bt-modal">
   <div class="modal-content" style="position:relative">

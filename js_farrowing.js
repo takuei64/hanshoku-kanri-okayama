@@ -67,7 +67,16 @@ var Farrowing = {
     var total = parseInt(document.getElementById('farrow-record-total').value) || 0;
     var still = parseInt(document.getElementById('farrow-record-still').value) || 0;
 
+    if (!sowNo) { App.toast('対象の母豚Noを確認してください'); return; }
+    if (!dateStr) { App.toast('分娩日を入力してください'); return; }
     if (total <= 0) { App.toast('総産子数を入力してください'); return; }
+    if (still < 0 || still > total) { App.toast('死産数を確認してください'); return; }
+    if (!confirm(
+      'No.' + sowNo + ' の分娩を登録しますか？\n' +
+      '分娩日: ' + dateStr + '\n' +
+      '総産子数: ' + total + '\n' +
+      '死産数: ' + still
+    )) return;
 
     App.hideModal('farrow-record-modal');
     App.toast('分娩を記録しました');

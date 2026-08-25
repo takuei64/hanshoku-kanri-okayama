@@ -308,6 +308,19 @@ body {
 .tl-detail {
   font-size: 12px; color: var(--text);
 }
+.tl-editable {
+  cursor: pointer;
+  -webkit-tap-highlight-color: rgba(26,115,232,.1);
+}
+.tl-editable:active { background: #e8f0fe; }
+.tl-edit-hint {
+  margin-left: auto;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.tl-editable .tl-delete { margin-left: 0; }
 
 /* ローディング */
 .loading {

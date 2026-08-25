@@ -80,7 +80,11 @@ function validateQueuedOperation_(operation) {
     deleteBreedingRecord: 5,
     deleteMatingRecord: 2,
     deleteFarrowingRecord: 4,
-    deleteWeaningRecord: 4
+    deleteWeaningRecord: 4,
+    updateMatingRecord: 3,
+    updateFarrowingRecord: 7,
+    updateWeaningRecord: 7,
+    updateBTRecord: 5
   };
   var type = String(operation.type || '');
   if (!allowed[type]) return '未対応の保存処理です';
@@ -117,6 +121,14 @@ function dispatchQueuedOperation_(type, args, authToken) {
       return deleteFarrowingRecord(args[0], args[1], args[2], args[3], authToken);
     case 'deleteWeaningRecord':
       return deleteWeaningRecord(args[0], args[1], args[2], args[3], authToken);
+    case 'updateMatingRecord':
+      return updateMatingRecord(args[0], args[1], args[2], authToken);
+    case 'updateFarrowingRecord':
+      return updateFarrowingRecord(args[0], args[1], args[2], args[3], args[4], args[5], args[6], authToken);
+    case 'updateWeaningRecord':
+      return updateWeaningRecord(args[0], args[1], args[2], args[3], args[4], args[5], args[6], authToken);
+    case 'updateBTRecord':
+      return updateBTRecord(args[0], args[1], args[2], args[3], args[4], authToken);
   }
   return { success: false, error: '未対応の保存処理です' };
 }

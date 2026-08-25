@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "test:backend": "node --test tests/backend-update.test.js",
     "test:pwa": "playwright test tests/pwa-offline.spec.js --reporter=line --workers=1"
   },
   "devDependencies": {

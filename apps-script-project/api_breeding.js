@@ -1364,6 +1364,198 @@ function recordWeaning(sowNo, dateStr, weanedCount, targetPen, authToken) {
   } finally { lock.releaseLock(); }
 }
 
+/** 個体カードから種付日を修正する。 */
+function updateMatingRecord(sowNo, oldDateStr, newDateStr, authToken) {
+  requireAuth_(authToken);
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    var ss = getSpreadsheet();
+    var sn = normalizeSowNo(sowNo);
+    if (!sn) throw new Error('母豚Noを確認してください');
+    var newDate = parseEditableRecordDate_(newDateStr, '種付日');
+    var sheet = ss.getSheetByName('種付');
+    if (!sheet) throw new Error('種付シートが見つかりません');
+    var data = sheet.getDataRange().getValues();
+    var targetRow = 0;
+    var alreadyUpdated = false;
+    for (var i = data.length - 1; i >= 1; i--) {
+      if (normalizeSowNo(data[i][0]) !== sn) continue;
+      var recordDate = toDateString(data[i][1]);
+      if (recordDate === String(newDateStr)) alreadyUpdated = true;
+      if (recordDate === String(oldDateStr)) {
+        targetRow = i + 1;
+        break;
+      }
+    }
+    if (!targetRow && !alreadyUpdated) return { success: false, error: '修正対象の種付記録が見つかりません' };
+
+    if (targetRow) sheet.getRange(targetRow, 2).setValue(newDate);
+
+    // 種付登録時に同時作成した「通常」記録の日付も、見つかる場合は揃える。
+    var breedingSheet = ss.getSheetByName('繁殖管理');
+    if (breedingSheet) {
+      var breedingData = breedingSheet.getDataRange().getValues();
+      for (var j = breedingData.length - 1; j >= 1; j--) {
+        var row = breedingData[j];
+        if (normalizeSowNo(row[1]) !== sn) continue;
+        if (toDateString(row[0]) !== String(oldDateStr)) continue;
+        if (String(row[2] || '') || String(row[3] || '') || String(row[4] || '') !== '通常') continue;
+        breedingSheet.getRange(j + 1, 1).setValue(newDate);
+        break;
+      }
+    }
+
+    try { getCache_().remove(CACHE_KEY_MATING); } catch (cacheError) {}
+    syncCurrentStatusForSow_(ss, sn);
+    invalidateInitialCache_();
+    return { success: true, alreadyUpdated: !targetRow };
+  } catch (e) {
+    return { success: false, error: e.message };
+  } finally { lock.releaseLock(); }
+}
+
+/** 個体カードから分娩記録を修正する。 */
+function updateFarrowingRecord(sowNo, oldDateStr, oldTotal, oldStill, newDateStr, newTotal, newStill, authToken) {
+  requireAuth_(authToken);
+  return updateLifecycleRecord_(
+    '分娩', sowNo, oldDateStr, oldTotal, oldStill,
+    newDateStr, newTotal, newStill, false
+  );
+}
+
+/** 個体カードから離乳記録を修正する。 */
+function updateWeaningRecord(sowNo, oldDateStr, oldWeaned, oldDeaths, newDateStr, newWeaned, newDeaths, authToken) {
+  requireAuth_(authToken);
+  return updateLifecycleRecord_(
+    '離乳', sowNo, oldDateStr, oldWeaned, oldDeaths,
+    newDateStr, newWeaned, newDeaths, true
+  );
+}
+
+function updateLifecycleRecord_(sheetName, sowNo, oldDateStr, oldValue1, oldValue2,
+                                newDateStr, newValue1, newValue2, updateWeaningMove) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    var ss = getSpreadsheet();
+    var sn = normalizeSowNo(sowNo);
+    if (!sn) throw new Error('母豚Noを確認してください');
+    var newDate = parseEditableRecordDate_(newDateStr, sheetName + '日');
+    var value1 = parseEditableRecordCount_(newValue1, sheetName === '分娩' ? '総産子数' : '離乳頭数', sheetName === '分娩' ? 1 : 0);
+    var value2 = parseEditableRecordCount_(newValue2, sheetName === '分娩' ? '死産数' : '死亡数', 0);
+    if (sheetName === '分娩' && value2 > value1) throw new Error('死産数は総産子数以下で入力してください');
+
+    var sheet = ss.getSheetByName(sheetName);
+    if (!sheet) throw new Error(sheetName + 'シートが見つかりません');
+    var data = sheet.getDataRange().getValues();
+    var targetRow = 0;
+    var alreadyUpdated = false;
+    for (var i = data.length - 1; i >= 1; i--) {
+      var row = data[i];
+      if (normalizeSowNo(row[0]) !== sn) continue;
+      var recordDate = toDateString(row[1]);
+      var recordValue1 = Number(row[2] || 0);
+      var recordValue2 = Number(row[3] || 0);
+      if (recordDate === String(newDateStr) && recordValue1 === value1 && recordValue2 === value2) {
+        alreadyUpdated = true;
+      }
+      if (recordDate === String(oldDateStr) &&
+          recordValue1 === Number(oldValue1 || 0) && recordValue2 === Number(oldValue2 || 0)) {
+        targetRow = i + 1;
+        break;
+      }
+    }
+    if (!targetRow && !alreadyUpdated) {
+      return { success: false, error: '修正対象の' + sheetName + '記録が見つかりません' };
+    }
+
+    if (targetRow) sheet.getRange(targetRow, 2, 1, 3).setValues([[newDate, value1, value2]]);
+
+    // 離乳登録時に同時作成した繁殖舎移動の日付も揃える。
+    if (updateWeaningMove) {
+      var breedingSheet = ss.getSheetByName('繁殖管理');
+      if (breedingSheet) {
+        var breedingData = breedingSheet.getDataRange().getValues();
+        for (var j = breedingData.length - 1; j >= 1; j--) {
+          var breedingRow = breedingData[j];
+          if (normalizeSowNo(breedingRow[1]) !== sn) continue;
+          if (toDateString(breedingRow[0]) !== String(oldDateStr)) continue;
+          if (String(breedingRow[4] || '') !== '離乳') continue;
+          breedingSheet.getRange(j + 1, 1).setValue(newDate);
+          break;
+        }
+      }
+    }
+
+    syncCurrentStatusForSow_(ss, sn);
+    invalidateInitialCache_();
+    return { success: true, alreadyUpdated: !targetRow };
+  } catch (e) {
+    return { success: false, error: e.message };
+  } finally { lock.releaseLock(); }
+}
+
+/** 個体カードからBT値と測定日を修正する。 */
+function updateBTRecord(sowNo, oldDateStr, oldBt, newDateStr, newBt, authToken) {
+  requireAuth_(authToken);
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(10000);
+    var ss = getSpreadsheet();
+    var sn = normalizeSowNo(sowNo);
+    if (!sn) throw new Error('母豚Noを確認してください');
+    var newDate = parseEditableRecordDate_(newDateStr, '測定日');
+    var bt = Number(newBt);
+    if (!isFinite(bt) || bt <= 0) throw new Error('BT値を確認してください');
+
+    var sheet = ss.getSheetByName('繁殖管理');
+    if (!sheet) throw new Error('繁殖管理シートが見つかりません');
+    var data = sheet.getDataRange().getValues();
+    var targetRow = 0;
+    var alreadyUpdated = false;
+    for (var i = data.length - 1; i >= 1; i--) {
+      var row = data[i];
+      if (normalizeSowNo(row[1]) !== sn) continue;
+      var recordDate = toDateString(row[0]);
+      var recordBt = Number(row[3]);
+      if (recordDate === String(newDateStr) && Math.abs(recordBt - bt) <= 0.001) alreadyUpdated = true;
+      if (recordDate === String(oldDateStr) && Math.abs(recordBt - Number(oldBt)) <= 0.001) {
+        targetRow = i + 1;
+        break;
+      }
+    }
+    if (!targetRow && !alreadyUpdated) return { success: false, error: '修正対象のBT記録が見つかりません' };
+
+    if (targetRow) {
+      sheet.getRange(targetRow, 1).setValue(newDate);
+      sheet.getRange(targetRow, 4).setValue(bt);
+    }
+    syncCurrentStatusForSow_(ss, sn);
+    invalidateInitialCache_();
+    return { success: true, alreadyUpdated: !targetRow };
+  } catch (e) {
+    return { success: false, error: e.message };
+  } finally { lock.releaseLock(); }
+}
+
+function parseEditableRecordDate_(dateStr, label) {
+  var input = String(dateStr || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input)) throw new Error(label + 'を確認してください');
+  var date = parseInputDate(input);
+  if (isNaN(date.getTime()) || toDateString(date) !== input) throw new Error(label + 'を確認してください');
+  return date;
+}
+
+function parseEditableRecordCount_(value, label, minimum) {
+  var text = value === null || value === undefined ? '' : String(value).trim();
+  var number = Number(text);
+  if (text === '' || !isFinite(number) || Math.floor(number) !== number || number < minimum) {
+    throw new Error(label + 'を確認してください');
+  }
+  return number;
+}
+
 /**
  * 種付シートの1行を削除（タイプミス修正用）
  * 末尾から検索して母豚No+日付一致の最初の行を削除
