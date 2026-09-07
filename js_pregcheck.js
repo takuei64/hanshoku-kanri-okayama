@@ -28,6 +28,7 @@ var PregCheck = {
       html += '<button class="btn-move-sm" style="background:var(--success)" onclick="PregCheck.confirm(\'' + s.sowNo + '\',\'妊娠鑑定済\')">合格</button>';
       html += '<button class="btn-move-sm" style="background:var(--danger)" onclick="PregCheck.confirm(\'' + s.sowNo + '\',\'空胎\')">空胎</button>';
       html += '</div>';
+      html += Breeding.renderHistory(s);
       html += '</div>';
     }
     container.innerHTML = html;
@@ -60,6 +61,7 @@ var PregCheck = {
         group: 0,
         days: 0,
         status: '空胎',
+        reproductiveHistory: pregRow.reproductiveHistory,
         btHistory: []
       });
       // 並び順は統合リストの描画時にペン番号昇順へ揃えられる

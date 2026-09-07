@@ -58,11 +58,11 @@ test('初期同期後は圏外再起動とBT削除キュー保持ができる', 
   await page.evaluate(() => navigator.serviceWorker.ready);
   const cacheResult = await page.evaluate(async () => {
     const names = await caches.keys();
-    const cache = await caches.open('breeding-okayama-pwa-v4');
+    const cache = await caches.open('breeding-okayama-pwa-v5-history');
     const keys = await cache.keys();
     return { names, urls: keys.map(item => new URL(item.url).pathname) };
   });
-  expect(cacheResult.names).toContain('breeding-okayama-pwa-v4');
+  expect(cacheResult.names).toContain('breeding-okayama-pwa-v5-history');
   expect(cacheResult.urls).toContain('/hanshoku-kanri-okayama/index.html');
   expect(cacheResult.urls).toContain('/hanshoku-kanri-okayama/pwa-runtime.js');
   expect(cacheResult.urls).toContain('/hanshoku-kanri-okayama/icon-512.png');

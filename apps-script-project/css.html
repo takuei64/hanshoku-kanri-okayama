@@ -479,4 +479,29 @@ body {
     padding-bottom: env(safe-area-inset-bottom);
   }
 }
+
+/* 繁殖チェック内で見渡せる、今回の繁殖経過 */
+.reproductive-history {
+  width: 100%;
+  margin: 8px 0;
+  padding: 9px 10px;
+  background: #f5f7fa;
+  border-left: 3px solid #577599;
+  border-radius: 4px;
+  font-family: "HGPゴシックM", "HGP Gothic M", sans-serif;
+  color: #202124;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.history-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.history-failure { color: #9e2b20; background: #fce8e6; border-radius: 4px; padding: 2px 5px; font-weight: bold; }
+.history-path { margin-top: 6px; line-height: 1.7; }
+.history-details { margin-top: 5px; }
+.history-details summary { cursor: pointer; color: #285c96; padding: 4px 0; }
+.history-details ol { list-style: none; padding: 4px 0; }
+.history-details li { padding: 3px 0; }
+.history-details time { display: inline-block; min-width: 86px; color: #4e5660; font-variant-numeric: tabular-nums; }
+.history-note { color: #505862; font-size: 12px; line-height: 1.6; }
+.history-pending { color: #854100; font-size: 12px; margin-bottom: 5px; font-weight: bold; }
+
 </style>

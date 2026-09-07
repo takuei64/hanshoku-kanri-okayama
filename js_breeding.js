@@ -26,7 +26,7 @@ var Breeding = {
   /** カードの種別（色分けクラスとラベル）。ステータス判定ロジック自体は従来のまま */
   typeInfo: function(item) {
     if (item.kind === 'postmating') return { cls: 'type-postmating', label: '種後' };
-    if (item.kind === 'reheat') return { cls: 'type-reheat', label: '再発' };
+    if (item.kind === 'reheat') return { cls: 'type-reheat', label: '再発チェック' };
     var reason = String(item.s.reason || '');
     if (reason.indexOf('空胎') >= 0) return { cls: 'type-empty', label: '空胎' };
     if (reason.indexOf('離乳') >= 0) return { cls: 'type-weaned', label: '離乳' };
@@ -50,8 +50,8 @@ var Breeding = {
 
     // 種別サマリー（凡例を兼ねる）
     var counts = {};
-    var order = ['離乳', '育成', '空胎', '種後', '再発'];
-    var clsMap = { '離乳': 'type-weaned', '育成': 'type-rearing', '空胎': 'type-empty', '種後': 'type-postmating', '再発': 'type-reheat' };
+    var order = ['離乳', '育成', '空胎', '種後', '再発チェック'];
+    var clsMap = { '離乳': 'type-weaned', '育成': 'type-rearing', '空胎': 'type-empty', '種後': 'type-postmating', '再発チェック': 'type-reheat' };
     for (var m = 0; m < merged.length; m++) {
       var label = Breeding.typeInfo(merged[m]).label;
       counts[label] = (counts[label] || 0) + 1;
@@ -90,6 +90,8 @@ var Breeding = {
         html += '<span class="status-badge ' + App.getStatusBadgeClass(s.status) + '">' + s.status + '</span>';
       }
 
+      html += Breeding.renderHistory(s);
+
       if (s.btHistory && s.btHistory.length > 0) {
         html += '<div class="bt-history">';
         for (var j = 0; j < s.btHistory.length; j++) {
@@ -116,6 +118,43 @@ var Breeding = {
       html += '</div>';
     }
     container.innerHTML = html;
+  },
+
+  /** 同期済みの履歴と未送信の変更を分けて表示する。 */
+  renderHistory: function(s) {
+    function esc(value) {
+      return String(value === null || value === undefined ? '' : value).replace(/[&<>"']/g, function(c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+    var pending = typeof OfflineSync !== 'undefined' && (OfflineSync.queue || []).some(function(op) {
+      return String((op.args || [])[0]) === String(s.sowNo) &&
+        /^(recordMating|recordStatusChange|recordFarrowing|recordWeaning|deleteMatingRecord|deleteBreedingRecord|deleteFarrowingRecord|deleteWeaningRecord|updateMatingRecord|updateFarrowingRecord|updateWeaningRecord)$/.test(op.type);
+    });
+    var h = s.reproductiveHistory;
+    var html = '<div class="reproductive-history">';
+    if (pending) html += '<div class="history-pending">未同期の変更あり・履歴は同期後に更新</div>';
+    if (!h) return html + '<div class="history-note">繁殖履歴はオンライン更新後に表示</div></div>';
+    html += '<div class="history-counts"><strong>' + esc(h.origin) + '・種付 ' + esc(h.attempts) + '回' +
+      (h.attempts ? '目' : '') + '（目安）</strong>';
+    if (h.returns) html += '<span class="history-failure">再発歴 ' + esc(h.returns) + '回</span>';
+    if (h.empties) html += '<span class="history-failure">空胎歴 ' + esc(h.empties) + '回</span>';
+    html += '</div>';
+    var events = h.events || [];
+    var path = [h.origin];
+    events.forEach(function(e) { if (e.type !== 'mating' || e.label.indexOf('追い') !== 0) path.push(e.label + (e.note ? '（日付不明）' : '')); });
+    html += '<div class="history-path">' + path.map(esc).join(' → ') + '</div>';
+    if (events.length) {
+      html += '<details class="history-details"><summary>日付・追い種付を確認</summary><ol>';
+      if (h.originDate) html += '<li><time>' + esc(h.originDate) + '</time> ' + esc(h.origin) + '</li>';
+      events.forEach(function(e) {
+        html += '<li><time>' + esc(e.date || '日付不明') + '</time> ' + esc(e.label) + (e.note ? '（' + esc(e.note) + '）' : '') + '</li>';
+      });
+      html += '</ol><div class="history-note">直近の分娩・離乳以降の記録。種付初日から3日以内は追い種付として集計。再種付の理由は記録がある場合に表示。</div>';
+      if (h.sameDayUncertain) html += '<div class="history-note">同日の種付と判定は前後関係を確認してください。</div>';
+      html += '</details>';
+    }
+    return html + '</div>';
   },
 
   getBadgeClass: function(status) {
@@ -226,6 +265,7 @@ var Breeding = {
     if (action.type === 'mating') {
       App.toast('種付実施を記録しました');
       OfflineSync.enqueue('recordMating', [action.sowNo, dateStr]);
+      Breeding.render();
     } else {
       // ステータス変更のみチェック対象から外す。種付はリストに残す。
       if (action.status === '廃用' && typeof SowLocation !== 'undefined' && SowLocation.removeSowLocal) {

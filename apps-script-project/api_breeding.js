@@ -10,7 +10,7 @@
  *   - 初回データ: doGet()でHTMLに埋め込み
  */
 
-var CACHE_KEY_INITIAL = 'init_v22';
+var CACHE_KEY_INITIAL = 'init_v23_history';
 var CACHE_KEY_MATING = 'matingMap_v4';
 var CACHE_TTL_INITIAL = 900;     // 15分
 var CACHE_TTL_MATING  = 21600;   // 6時間
@@ -150,6 +150,7 @@ function getInitialData_() {
   var pregnancyCheckList = buildPregnancyCheckListFromCurrent_(currentRows);
   var accidentList = getRecentAccidents_(ss);
   var penTaskList = buildPenTaskList_(ss, parsed, latestFarrowingMap, latestMatingMap);
+  attachReproductiveHistory_(ss, [morningList, postMatingList, reheatCheckList, pregnancyCheckList]);
   return { morningList: morningList, locationList: locationList, farrowingList: farrowingList, postMatingList: postMatingList, reheatCheckList: reheatCheckList, pregnancyCheckList: pregnancyCheckList, accidentList: accidentList, penTaskList: penTaskList };
 }
 

@@ -1,6 +1,6 @@
 'use strict';
 
-const CACHE_NAME = 'breeding-okayama-pwa-v4';
+const CACHE_NAME = 'breeding-okayama-pwa-v5-history';
 const BASE_PATH = '/hanshoku-kanri-okayama/';
 const APP_SHELL = [
   BASE_PATH,
@@ -37,7 +37,7 @@ self.addEventListener('activate', function(event) {
   event.waitUntil(
     caches.keys()
       .then(function(keys) {
-        return Promise.all(keys.filter(function(key) { return key !== CACHE_NAME; }).map(function(key) {
+        return Promise.all(keys.filter(function(key) { return key.indexOf('breeding-okayama-pwa-') === 0 && key !== CACHE_NAME; }).map(function(key) {
           return caches.delete(key);
         }));
       })
