@@ -4,6 +4,9 @@ var App = {
   currentPage: 'breeding',
   dataLoaded: false,
   authToken: __authToken || '',
+  penList: [],
+  refreshing: false,
+  snapshotKey: 'hanshoku-kanri-okayama-v1:data-snapshot',
 
   /** 今日の日付を "yyyy-MM-dd" で返す（JST固定。端末タイムゾーンに依存しない） */
   today: function() {
@@ -22,23 +25,22 @@ var App = {
   },
 
   init: function() {
-    if (App.authToken) localStorage.setItem('hanshoku-kanri-okayama-v1:auth-token', App.authToken);
+    try { if (App.authToken) localStorage.setItem('hanshoku-kanri-okayama-v1:auth-token', App.authToken); } catch (e) {}
     document.querySelectorAll('.tab-bar button').forEach(function(btn) {
       btn.addEventListener('click', function() { App.navigateTo(btn.dataset.page); });
     });
     document.addEventListener('click', App.prepareActionTap, true);
     document.addEventListener('touchend', App.prepareActionTap, true);
-    // 初回データはHTMLに埋め込み済み（サーバー往復ゼロ）
     var data = __initialData || {};
-    Breeding.list = data.morningList || [];
-    PostMating.list = data.postMatingList || [];
-    Farrowing.list = data.farrowingList || [];
-    Farrowing.accidentList = data.accidentList || [];
-    SowLocation.list = data.locationList || [];
-    ReheatCheck.list = data.reheatCheckList || [];
-    PregCheck.list = data.pregnancyCheckList || [];
-    PenTask.list = data.penTaskList || [];
+    // Pending local inputs take priority over server-rendered initial data.
+    OfflineSync.queue = OfflineSync.loadQueue();
+    if (OfflineSync.hasUnresolved()) {
+      try { data = JSON.parse(localStorage.getItem(App.snapshotKey)) || data; } catch (e) {}
+    }
+    data = App.replaySnapshot(data);
+    App.applyData(data, false, true);
     App.dataLoaded = true;
+    if (typeof PwaStore === 'undefined' || OfflineSync.hasUnresolved()) App.writeSnapshot(data);
     OfflineSync.init();
     App.navigateTo('breeding');
   },
@@ -70,39 +72,113 @@ var App = {
     if (page === 'sowcard' && opts && opts.sowNo) SowCard.search(opts.sowNo);
   },
 
-  /** 全データを再取得（明示的リフレッシュ） */
-  refresh: function() {
-    if (typeof OfflineSync !== 'undefined' && OfflineSync.hasPending()) {
+  applyData: function(data, render, preserveCards) {
+    App.snapshotApplied = data.__offlineApplied || [];
+    Breeding.list = data.morningList || [];
+    PostMating.list = data.postMatingList || [];
+    Farrowing.list = data.farrowingList || [];
+    Farrowing.accidentList = data.accidentList || [];
+    SowLocation.list = data.locationList || [];
+    ReheatCheck.list = data.reheatCheckList || [];
+    PregCheck.list = data.pregnancyCheckList || [];
+    PenTask.list = data.penTaskList || [];
+    App.penList = data.penList || [];
+    if (data.penTaskConfig) {
+      PenTask.farrowingTaskTypes = data.penTaskConfig.farrowingTypes || [];
+      PenTask.breedingTaskTypes = data.penTaskConfig.breedingTypes || [];
+      PenTask.dueDays = data.penTaskConfig.days || {};
+    }
+    if (data.sowCards && typeof SowCard !== 'undefined' && SowCard.saveCached) {
+      App.cardSaveFailed = false;
+      Object.keys(data.sowCards).forEach(function(no) {
+        if (!preserveCards || !SowCard.loadCached(no)) {
+          if (!SowCard.saveCached(no, data.sowCards[no])) App.cardSaveFailed = true;
+        }
+      });
+    }
+    if (render !== false) App.writeSnapshot(data);
+    if (render !== false) App.navigateTo(App.currentPage);
+  },
+  snapshotData: function() {
+    return JSON.parse(JSON.stringify({
+      morningList: Breeding.list, postMatingList: PostMating.list,
+      farrowingList: Farrowing.list, accidentList: Farrowing.accidentList,
+      locationList: SowLocation.list, reheatCheckList: ReheatCheck.list,
+      pregnancyCheckList: PregCheck.list, penTaskList: PenTask.list, penList: App.penList,
+      penTaskConfig: {farrowingTypes:PenTask.farrowingTaskTypes, breedingTypes:PenTask.breedingTaskTypes, days:PenTask.dueDays},
+      __offlineApplied: App.snapshotApplied || []
+    }));
+  },
+  readSnapshot: function() {
+    try { return JSON.parse(localStorage.getItem(App.snapshotKey)) || null; } catch (e) { return null; }
+  },
+  replaySnapshot: function(data) {
+    if (typeof SnapshotPatch === 'undefined') return data;
+    OfflineSync.loadQueue().forEach(function(op) {
+      if (op.localPatch) data = SnapshotPatch.apply(data, op.localPatch, op.id);
+    });
+    return data;
+  },
+  writeSnapshot: function(data) {
+    // Cards have their own durable cache; avoid storing every full timeline twice.
+    var snapshot = Object.assign({}, data); delete snapshot.sowCards;
+    try {
+      localStorage.setItem(App.snapshotKey, JSON.stringify(snapshot));
+      localStorage.setItem(App.snapshotKey + '-time', new Date().toISOString());
+      App.snapshotSaveFailed = !!App.cardSaveFailed; return !App.cardSaveFailed;
+    } catch (e) { App.snapshotSaveFailed = true; return false; }
+  },
+  prepareLocalMutation: function() {
+    var data = App.readSnapshot();
+    if (data) App.applyData(App.replaySnapshot(data), false, true);
+    return App.snapshotData();
+  },
+  commitLocalMutation: function(op, before) {
+    if (typeof SnapshotPatch === 'undefined') return App.captureSnapshot();
+    op.localPatch = SnapshotPatch.diff(before, App.snapshotData());
+    if (!OfflineSync.persist(op)) {
+      // If the enlarged operation hits quota, the original args are still saved.
+      // Attempt the smaller snapshot update without replacing another tab's changes.
+      var fallback = SnapshotPatch.apply(App.replaySnapshot(App.readSnapshot() || before), op.localPatch, op.id);
+      App.applyData(fallback, false, true);
+      var saved = App.writeSnapshot(fallback);
+      if (!saved) App.toast('記録は保存済みですが一覧保存を再確認してください');
+      return saved;
+    }
+    var data = App.replaySnapshot(App.readSnapshot() || before);
+    App.applyData(data, false, true);
+    return App.writeSnapshot(data);
+  },
+  captureSnapshot: function() {
+    // A stale/background tab may replay durable deltas, never replace a newer view.
+    var latest = App.readSnapshot();
+    if (!latest) return App.writeSnapshot(App.snapshotData());
+    return App.writeSnapshot(App.replaySnapshot(latest));
+  },
+  refresh: function() { App.refreshQuietly(false); },
+  refreshQuietly: function(quiet) {
+    if (App.refreshing) return;
+    OfflineSync.queue = OfflineSync.loadQueue();
+    if (OfflineSync.hasUnresolved()) {
       OfflineSync.retryPendingNow();
-      App.toast('未送信記録があります。同期後に更新してください');
+      if (quiet === false) App.toast('未送信・要確認の記録を保持しています。解決後に自動更新します');
       return;
     }
-    App.showLoading();
-    google.script.run
-      .withSuccessHandler(function(data) {
-        Breeding.list = data.morningList || [];
-        PostMating.list = data.postMatingList || [];
-        Farrowing.list = data.farrowingList || [];
-        Farrowing.accidentList = data.accidentList || [];
-        SowLocation.list = data.locationList || [];
-        ReheatCheck.list = data.reheatCheckList || [];
-        PregCheck.list = data.pregnancyCheckList || [];
-        PenTask.list = data.penTaskList || [];
-        App.hideLoading();
-        // 現在のページを再描画
-        if (App.currentPage === 'breeding') Breeding.render();
-        if (App.currentPage === 'pregcheck') PregCheck.render();
-        if (App.currentPage === 'farrowing') { Farrowing.render(); Farrowing.renderAccidents(); }
-        if (App.currentPage === 'weaning') Weaning.render();
-        if (App.currentPage === 'location') SowLocation.render();
-        if (App.currentPage === 'pentask') PenTask.render();
-        App.toast('更新しました');
-      })
-      .withFailureHandler(function(e) {
-        App.hideLoading();
-        App.toast('更新エラー: ' + e.message);
-      })
-      .refreshAllData(App.authToken);
+    App.refreshing = true;
+    var revision = OfflineSync.mutationRevision();
+    if (quiet === false) App.showLoading();
+    google.script.run.withSuccessHandler(function(data) {
+      App.refreshing = false; App.hideLoading();
+      // Reject replies that predate an input made while the request was in flight.
+      OfflineSync.queue = OfflineSync.loadQueue();
+      if (OfflineSync.hasUnresolved() || revision !== OfflineSync.mutationRevision()) { OfflineSync.schedule(100); return; }
+      App.applyData(data); OfflineSync.refreshCompleted();
+      if (quiet === false) App.toast('更新しました');
+    }).withFailureHandler(function(e) {
+      App.refreshing = false; App.hideLoading();
+      if (quiet === false) App.toast('更新エラー: ' + e.message);
+      if (OfflineSync.needsRefresh) OfflineSync.schedule(15000);
+    }).refreshAllData(App.authToken);
   },
 
   showLoading: function() { document.getElementById('loading').classList.add('active'); },

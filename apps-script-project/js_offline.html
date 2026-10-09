@@ -1,359 +1,276 @@
 <script>
-// 電波が弱い場所向けの端末保存・順次同期
-
+// Operation entries are authoritative; the legacy array is only a compatibility view.
 var OfflineSync = {
   storageKey: 'hanshoku-kanri-okayama-v1:offline-queue',
-  queue: [],
-  callbacks: {},
-  sending: false,
-  activeSendToken: '',
-  retryTimer: null,
-  initialized: false,
-  storageAvailable: true,
-
+  queue: [], callbacks: {}, sending: false, checking: false, activeSendToken: '', retryTimer: null,
+  initialized: false, storageAvailable: true, networkState: 'unknown', needsRefresh: false,
+  mutationRevision: function() {
+    var keys=[];
+    try { for (var i=0;i<localStorage.length;i++) {
+      var key=localStorage.key(i);
+      if (key && (key.indexOf(this.storageKey+':op:')===0 || key.indexOf(this.storageKey+':done:')===0)) keys.push(key);
+    } } catch (e) { return 'unavailable'; }
+    return keys.sort().join('|');
+  },
+  opKey: function(id) { return this.storageKey + ':op:' + encodeURIComponent(id); },
+  doneKey: function(id) { return this.storageKey + ':done:' + encodeURIComponent(id); },
   init: function() {
-    if (OfflineSync.initialized) return;
-    OfflineSync.queue = OfflineSync.loadQueue();
-    OfflineSync.initialized = true;
-
-    window.addEventListener('online', function() {
-      OfflineSync.retryPendingNow();
-    });
-    window.addEventListener('offline', function() {
-      OfflineSync.updateStatus();
-    });
+    if (this.initialized) return;
+    this.queue = this.loadQueue(); this.initialized = true;
+    ['online', 'pageshow', 'focus'].forEach(function(name) { window.addEventListener(name, function() { OfflineSync.retryPendingNow(); }); });
+    window.addEventListener('offline', function() { OfflineSync.networkState = 'offline'; OfflineSync.updateStatus(); });
+    window.addEventListener('pagehide', function() { App.captureSnapshot(); });
+    document.addEventListener('visibilitychange', function() { if (!document.hidden) OfflineSync.retryPendingNow(); else App.captureSnapshot(); });
     window.addEventListener('storage', function(e) {
-      if (e.key !== OfflineSync.storageKey || OfflineSync.sending) return;
-      OfflineSync.queue = OfflineSync.loadQueue();
-      OfflineSync.updateStatus();
-      OfflineSync.process();
+      if (e.key === 'hanshoku-kanri-okayama-v1:auth-token') { App.authToken = e.newValue || ''; OfflineSync.retryPendingNow(!!e.newValue); return; }
+      if (!e.key || e.key.indexOf(OfflineSync.storageKey) !== 0) return;
+      OfflineSync.queue = OfflineSync.loadQueue(); OfflineSync.updateStatus(); OfflineSync.process();
     });
-    document.addEventListener('visibilitychange', function() {
-      if (!document.hidden) OfflineSync.process();
-    });
-
-    OfflineSync.updateStatus();
-    setTimeout(function() { OfflineSync.process(); }, 300);
+    try { this.needsRefresh = localStorage.getItem(this.storageKey + ':refresh') === '1'; } catch (e) {}
+    this.updateStatus(); setTimeout(function() { OfflineSync.retryPendingNow(); }, 0);
     setInterval(function() { OfflineSync.process(); }, 30000);
   },
-
   loadQueue: function() {
+    var list = [], self = this;
     try {
-      var raw = localStorage.getItem(OfflineSync.storageKey);
-      var list = raw ? JSON.parse(raw) : [];
-      if (!Array.isArray(list)) return [];
-      for (var i = 0; i < list.length; i++) {
-        // 送信途中でアプリが閉じられた記録は、再起動後に再送する。
-        if (list[i].state === 'sending') list[i].state = 'pending';
-        // 再ログイン後は新しい認証トークンで自動再送する。
-        if (list[i].state === 'failed' && String(list[i].error || '').indexOf('認証が切れました') >= 0) {
-          list[i].state = 'pending';
-          list[i].attempts = 0;
-          list[i].nextAttemptAt = 0;
-        }
+      { // Also import operations left by an older, still-open release; never replace new entries.
+        var legacy = JSON.parse(localStorage.getItem(this.storageKey) || '[]');
+        if (!Array.isArray(legacy)) throw new Error('Invalid queue');
+        legacy.forEach(function(op) {
+          if (!op || !op.id) throw new Error('Invalid operation');
+          if (!localStorage.getItem(self.doneKey(op.id)) && !localStorage.getItem(self.opKey(op.id))) localStorage.setItem(self.opKey(op.id), JSON.stringify(op));
+        });
+        localStorage.setItem(this.storageKey + ':migrated', '1');
       }
-      return list;
+      var prefix = this.storageKey + ':op:';
+      for (var i = 0; i < localStorage.length; i++) {
+        var key = localStorage.key(i); if (!key || key.indexOf(prefix) !== 0) continue;
+        var op = JSON.parse(localStorage.getItem(key));
+        if (!op || !op.id) throw new Error('Invalid operation');
+        if (localStorage.getItem(this.doneKey(op.id))) continue;
+        if (op.state === 'sending') op.state = 'pending';
+        if (op.state === 'failed' && /認証|ログイン/.test(op.error || '')) { op.state = 'auth'; op.errorKind = 'auth'; }
+        list.push(op);
+      }
+      list.sort(function(a, b) { return String(a.createdAt).localeCompare(String(b.createdAt)) || String(a.id).localeCompare(String(b.id)); });
+      this.storageAvailable = true;
     } catch (e) {
-      OfflineSync.storageAvailable = false;
-      return [];
+      // Preserve corrupt bytes and current memory, never overwrite with an empty queue.
+      this.storageAvailable = false; return this.queue.length ? this.queue : list;
     }
+    return list;
   },
-
   saveQueue: function() {
+    this.queue = this.loadQueue(); if (!this.storageAvailable) return false;
+    try { localStorage.setItem(this.storageKey, JSON.stringify(this.queue)); } catch (e) { /* individual entries remain saved */ }
+    return true;
+  },
+  persist: function(op, explicitRetry) {
     try {
-      localStorage.setItem(OfflineSync.storageKey, JSON.stringify(OfflineSync.queue));
-      OfflineSync.storageAvailable = true;
+      if (localStorage.getItem(this.doneKey(op.id))) return false;
+      var existing = JSON.parse(localStorage.getItem(this.opKey(op.id)) || 'null');
+      if (existing && !explicitRetry) {
+        if (Number(existing.updatedAt || 0) > Number(op.updatedAt || 0)) return false;
+        if ((existing.state === 'failed' || existing.state === 'auth') && op.state === 'pending') return false;
+      }
+      if (existing && existing.localPatch && !op.localPatch) op.localPatch = existing.localPatch;
+      op.updatedAt = Math.max(Date.now(), Number(existing && existing.updatedAt || 0) + 1);
+      localStorage.setItem(this.opKey(op.id), JSON.stringify(op)); this.storageAvailable = true;
+      this.saveQueue();
+      if (typeof PwaSyncStore !== 'undefined') PwaSyncStore.putOperation(op, { explicitRetry: !!explicitRetry }).then(function() {
+        if (typeof PwaBackgroundSync !== 'undefined') PwaBackgroundSync.register();
+      }).catch(function() {});
       return true;
-    } catch (e) {
-      OfflineSync.storageAvailable = false;
-      return false;
-    }
+    } catch (e) { this.storageAvailable = false; return false; }
   },
-
-  createId: function() {
-    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-      return window.crypto.randomUUID();
-    }
-    return 'op-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) + '-' + Math.random().toString(36).slice(2);
-  },
-
+  createId: function() { return window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : 'op-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2) + '-' + Math.random().toString(36).slice(2); },
   enqueue: function(type, args, handlers) {
-    var op = {
-      id: OfflineSync.createId(),
-      type: type,
-      args: args || [],
-      createdAt: new Date().toISOString(),
-      attempts: 0,
-      nextAttemptAt: 0,
-      state: 'pending',
-      error: ''
-    };
-    OfflineSync.queue.push(op);
-    OfflineSync.callbacks[op.id] = handlers || {};
-    if (!OfflineSync.saveQueue() && typeof App !== 'undefined') {
-      App.toast('端末保存エラー。画面を閉じずに電波のある場所へ移動してください');
-    }
-    OfflineSync.updateStatus();
-    setTimeout(function() { OfflineSync.process(); }, 0);
-    return op.id;
+    this.queue = this.loadQueue();
+    if (!this.storageAvailable) { App.toast('端末保存を確認できません。入力内容を保持して管理者へ連絡してください'); return null; }
+    var latestTime = this.queue.reduce(function(t, item) { return Math.max(t, Date.parse(item.createdAt) || 0); }, 0);
+    var before = App.prepareLocalMutation ? App.prepareLocalMutation() : null;
+    var op = {id:this.createId(), type:type, args:args || [], createdAt:new Date(Math.max(Date.now(), latestTime + 1)).toISOString(), attempts:0, nextAttemptAt:0, state:'pending', error:'', errorKind:''};
+    if (!this.persist(op)) { App.toast('端末保存できませんでした。入力内容を残しています'); this.updateStatus(); return null; }
+    this.callbacks[op.id] = handlers || {};
+    if (handlers && handlers.applyLocal) handlers.applyLocal();
+    if (App.commitLocalMutation && before) App.commitLocalMutation(op, before); else App.captureSnapshot();
+    this.updateStatus(); setTimeout(function() { OfflineSync.process(); }, 0); return op.id;
   },
-
-  pendingCount: function() {
-    var count = 0;
-    for (var i = 0; i < OfflineSync.queue.length; i++) {
-      if (OfflineSync.queue[i].state !== 'failed') count++;
-    }
-    return count;
-  },
-
-  failedCount: function() {
-    var count = 0;
-    for (var i = 0; i < OfflineSync.queue.length; i++) {
-      if (OfflineSync.queue[i].state === 'failed') count++;
-    }
-    return count;
-  },
-
-  hasPending: function() {
-    return OfflineSync.pendingCount() > 0;
-  },
-
-  isOnline: function() {
-    return typeof navigator.onLine !== 'boolean' || navigator.onLine;
-  },
-
+  pendingCount: function() { return this.queue.filter(function(op) { return op.state !== 'failed'; }).length; },
+  failedCount: function() { return this.queue.filter(function(op) { return op.state === 'failed'; }).length; },
+  authCount: function() { return this.queue.filter(function(op) { return op.state === 'auth'; }).length; },
+  hasPending: function() { return this.pendingCount() > 0; },
+  hasUnresolved: function() { return this.queue.length > 0; },
+  isOnline: function() { return navigator.onLine !== false && this.networkState === 'online'; },
   updateStatus: function() {
-    var el = document.getElementById('sync-status');
-    if (!el) return;
-    var pending = OfflineSync.pendingCount();
-    var failed = OfflineSync.failedCount();
-    el.className = 'sync-status';
-
-    if (!OfflineSync.storageAvailable) {
-      el.textContent = '端末保存不可';
-      el.classList.add('sync-failed');
-      el.title = '未送信記録を端末へ保存できません';
-    } else if (failed > 0) {
-      el.textContent = '要確認 ' + failed;
-      el.classList.add('sync-failed');
-      el.title = 'タップして内容を確認';
-    } else if (pending > 0 && !OfflineSync.isOnline()) {
-      el.textContent = '通信待ち ' + pending;
-      el.classList.add('sync-waiting');
-      el.title = '電波が戻ると自動送信します';
-    } else if (pending > 0 && OfflineSync.sending) {
-      el.textContent = '送信中 ' + pending;
-      el.classList.add('sync-sending');
-      el.title = '未送信記録を送信しています';
-    } else if (pending > 0) {
-      el.textContent = '未送信 ' + pending;
-      el.classList.add('sync-waiting');
-      el.title = 'タップして再送';
-    } else {
-      el.textContent = '同期済';
-      el.classList.add('sync-ok');
-      el.title = 'すべての記録を送信済みです';
-    }
+    var el = document.getElementById('sync-status'); if (!el) return;
+    var n = this.pendingCount(), f = this.failedCount(), a = this.authCount(), label, style, title;
+    if (!this.storageAvailable) { label='端末保存不可'; style='failed'; title='未送信記録を端末へ保存できません'; }
+    else if (App.snapshotSaveFailed) { label='一覧保存不可・通信待ち ' + n; style='failed'; title='記録は保持しています。端末の空き容量を確認してください'; }
+    else if (f) { label='要確認 ' + f + (n ? '・待ち ' + n : ''); style='failed'; title='内容・理由・再送・破棄を確認'; }
+    else if (a) { label='認証待ち ' + n; style='waiting'; title='記録は保存済みです。ログイン後に自動送信します'; }
+    else if (n && this.sending) { label='送信中 ' + n; style='sending'; title='未送信記録を送信しています'; }
+    else if (n) { label='通信待ち ' + n; style='waiting'; title='端末保存済みです。通信復帰時に自動送信します'; }
+    else if (this.needsRefresh) { label='一覧更新待ち'; style='waiting'; title='送信済みです。最新一覧を自動取得します'; }
+    else { label='同期済'; style='ok'; title='すべての記録を送信済みです'; }
+    el.textContent=label; el.className='sync-status sync-' + style; el.title=title;
   },
-
   showStatus: function() {
-    var failed = OfflineSync.failedCount();
-    var pending = OfflineSync.pendingCount();
-    if (failed > 0) {
-      var first = null;
-      for (var i = 0; i < OfflineSync.queue.length; i++) {
-        if (OfflineSync.queue[i].state === 'failed') { first = OfflineSync.queue[i]; break; }
-      }
-      var target = first ? '\n対象: ' + OfflineSync.describeOperation(first) : '';
-      var reason = first && first.error ? '\n理由: ' + first.error : '';
-      if (confirm('送信できない記録が' + failed + '件あります。' + target + reason + '\n再送しますか？')) {
-        OfflineSync.retryFailed();
-      }
-      return;
-    }
-    if (pending > 0) {
-      if (typeof App !== 'undefined') {
-        App.toast(OfflineSync.isOnline() ? '未送信記録を再送します' : '通信待ちです。電波が戻ると自動送信します');
-      }
-      OfflineSync.retryPendingNow();
-      return;
-    }
-    if (typeof App !== 'undefined') App.toast('すべて同期済みです');
+    this.queue=this.loadQueue();
+    if (this.failedCount()) { this.showReview(); return; }
+    if (this.authCount()) { if (typeof PwaAuth !== 'undefined') PwaAuth.showLogin(true); else App.toast('未送信記録は保存済みです。オンラインで再ログインしてください'); return; }
+    if (this.hasPending()) { this.retryPendingNow(); App.toast('通信可能になると自動送信します'); }
+    else App.toast(this.needsRefresh ? '最新一覧を取得しています' : 'すべて同期済みです');
   },
-
-  retryFailed: function() {
-    for (var i = 0; i < OfflineSync.queue.length; i++) {
-      if (OfflineSync.queue[i].state !== 'failed') continue;
-      OfflineSync.queue[i].state = 'pending';
-      OfflineSync.queue[i].attempts = 0;
-      OfflineSync.queue[i].nextAttemptAt = 0;
-      OfflineSync.queue[i].error = '';
-    }
-    OfflineSync.saveQueue();
-    OfflineSync.updateStatus();
-    OfflineSync.process();
+  showReview: function() {
+    var old=document.getElementById('sync-review'); if (old) old.remove();
+    var overlay=document.createElement('div'); overlay.id='sync-review'; overlay.className='modal-overlay active';
+    var content=document.createElement('div'); content.className='modal-content';
+    var title=document.createElement('h3'); title.textContent='要確認の記録'; content.appendChild(title);
+    this.queue.filter(function(op) { return op.state === 'failed'; }).forEach(function(op) {
+      var section=document.createElement('div'); section.className='card';
+      var description=document.createElement('p'); description.textContent=OfflineSync.describeOperation(op) + '\n理由: ' + op.error;
+      var details=document.createElement('pre'); details.style.whiteSpace='pre-wrap'; details.textContent='内容: ' + JSON.stringify(op.args);
+      section.appendChild(description); section.appendChild(details);
+      [['この記録を再送', function() { OfflineSync.retryFailed(op.id); OfflineSync.showReview(); }], ['この記録を破棄', function() {
+        if (!confirm('この未送信記録だけを破棄しますか？\n' + OfflineSync.describeOperation(op) + '\nサーバーの記録は削除しません。')) return;
+        OfflineSync.removeOperation(op.id); OfflineSync.markRefreshNeeded(); OfflineSync.showReview(); OfflineSync.process();
+      }]].forEach(function(action) { var button=document.createElement('button'); button.type='button'; button.textContent=action[0]; button.onclick=action[1]; section.appendChild(button); });
+      content.appendChild(section);
+    });
+    var close=document.createElement('button'); close.textContent='閉じる'; close.onclick=function() { overlay.remove(); };
+    content.appendChild(close); overlay.appendChild(content); document.body.appendChild(overlay); this.updateStatus();
   },
-
-  retryPendingNow: function() {
-    for (var i = 0; i < OfflineSync.queue.length; i++) {
-      if (OfflineSync.queue[i].state === 'pending') OfflineSync.queue[i].nextAttemptAt = 0;
-    }
-    OfflineSync.saveQueue();
-    OfflineSync.updateStatus();
-    OfflineSync.process();
+  retryFailed: function(id) {
+    this.queue=this.loadQueue(); this.queue.forEach(function(op) {
+      if (op.state !== 'failed' || op.id !== id) return;
+      op.state='pending'; op.attempts=0; op.nextAttemptAt=0; op.error=''; op.errorKind=''; OfflineSync.persist(op, true);
+    }); this.updateStatus(); this.process();
   },
-
-  firstPending: function() {
-    for (var i = 0; i < OfflineSync.queue.length; i++) {
-      if (OfflineSync.queue[i].state === 'pending') return OfflineSync.queue[i];
-    }
-    return null;
+  retryPendingNow: function(authenticated) {
+    if (typeof PwaNetwork !== 'undefined' && PwaNetwork.invalidate) PwaNetwork.invalidate();
+    // Reconcile worker errors before resetting retry times; never overwrite a newer
+    // permanent worker failure with this tab's stale pending copy.
+    this.resumeRequested = true;
+    this.authResumed = this.authResumed || !!authenticated;
+    this.process();
   },
-
+  firstPending: function() { return this.queue.find(function(op) { return op.state === 'pending'; }) || null; },
+  reconcileBackground: function() {
+    if (typeof PwaSyncStore === 'undefined') return Promise.resolve();
+    return Promise.all([PwaSyncStore.consumeAcknowledgements(), PwaSyncStore.getOperations()]).then(function(results) {
+      results[0].forEach(function(id) { if (OfflineSync.queue.some(function(op) { return op.id === id; })) { OfflineSync.removeOperation(id); OfflineSync.markRefreshNeeded(); } });
+      results[1].forEach(function(remote) {
+        var local=OfflineSync.queue.find(function(op) { return op.id === remote.id; });
+        if (local && Number(remote.updatedAt || 0) > Number(local.updatedAt || 0)) OfflineSync.persist(remote);
+      });
+      OfflineSync.queue.forEach(function(op) { PwaSyncStore.putOperation(op).catch(function() {}); });
+    }).catch(function() {});
+  },
+  probeBackend: function() {
+    if (navigator.onLine === false) return Promise.resolve({state:'offline'});
+    if (typeof PwaNetwork !== 'undefined') return PwaNetwork.check(false);
+    return new Promise(function(resolve) {
+      var finished=false; function done(result) { if (finished) return; finished=true; clearTimeout(timer); resolve(result); }
+      var timer=setTimeout(function() { done({state:'offline'}); }, 3500);
+      google.script.run.withSuccessHandler(function(result) { done(result && result.state ? result : {state:result && result.status === 'server' ? 'server' : result && result.authenticated ? 'online' : 'auth'}); })
+        .withFailureHandler(function() { done({state:'server'}); }).ping(App.authToken);
+    });
+  },
   process: function() {
-    if (!OfflineSync.initialized || OfflineSync.sending) return;
-    if (OfflineSync.retryTimer) {
-      clearTimeout(OfflineSync.retryTimer);
-      OfflineSync.retryTimer = null;
-    }
-
-    var op = OfflineSync.firstPending();
-    if (!op) {
-      OfflineSync.updateStatus();
-      return;
-    }
-    if (!OfflineSync.isOnline()) {
-      OfflineSync.updateStatus();
-      return;
-    }
-
-    var waitMs = Math.max(0, Number(op.nextAttemptAt || 0) - Date.now());
-    if (waitMs > 0) {
-      OfflineSync.schedule(waitMs);
-      OfflineSync.updateStatus();
-      return;
-    }
-
-    OfflineSync.sending = true;
-    op.state = 'sending';
-    OfflineSync.saveQueue();
-    OfflineSync.updateStatus();
-
-    var sendToken = op.id + ':' + Date.now() + ':' + Math.random();
-    OfflineSync.activeSendToken = sendToken;
-    var timeoutId = setTimeout(function() {
-      OfflineSync.retryOperation(op, sendToken, '応答待ちがタイムアウトしました');
-    }, 25000);
-
-    google.script.run
-      .withSuccessHandler(function(res) {
-        if (OfflineSync.activeSendToken !== sendToken) return;
-        clearTimeout(timeoutId);
-        if (res && res.success) {
-          OfflineSync.completeOperation(op, sendToken, res);
-        } else if (res && res.retryable) {
-          OfflineSync.retryOperation(op, sendToken, res.error || '一時的な保存エラー');
-        } else {
-          OfflineSync.failOperation(op, sendToken, (res && res.error) || '保存できませんでした');
-        }
-      })
-      .withFailureHandler(function(e) {
-        if (OfflineSync.activeSendToken !== sendToken) return;
-        clearTimeout(timeoutId);
-        OfflineSync.retryOperation(op, sendToken, OfflineSync.errorText(e));
-      })
-      .executeQueuedOperation({
-        id: op.id,
-        type: op.type,
-        args: op.args,
-        createdAt: op.createdAt
-      }, App.authToken);
+    if (!OfflineSync.initialized || OfflineSync.sending || OfflineSync.checking) return;
+    if (OfflineSync.retryTimer) { clearTimeout(OfflineSync.retryTimer); OfflineSync.retryTimer=null; }
+    OfflineSync.checking=true; OfflineSync.queue=OfflineSync.loadQueue();
+    OfflineSync.reconcileBackground().then(function() {
+      if (OfflineSync.resumeRequested) {
+        var authenticated = OfflineSync.authResumed;
+        OfflineSync.resumeRequested = false; OfflineSync.authResumed = false;
+        OfflineSync.queue.forEach(function(op) {
+          if (authenticated && op.state === 'auth') { op.state = 'pending'; op.errorKind = ''; op.error = ''; }
+          if (op.state === 'pending') { op.nextAttemptAt = 0; OfflineSync.persist(op, authenticated); }
+        });
+      }
+      if (!OfflineSync.hasPending() && !OfflineSync.needsRefresh) return null;
+      return OfflineSync.probeBackend();
+    }).then(function(network) {
+      OfflineSync.checking=false;
+      if (!network) { OfflineSync.updateStatus(); return; }
+      OfflineSync.networkState=network.state;
+      if (network.state === 'auth') {
+        OfflineSync.queue.forEach(function(op) { if (op.state === 'pending') { op.state='auth'; op.errorKind='auth'; op.error='再ログインが必要です'; OfflineSync.persist(op); } });
+        if (typeof PwaAuth !== 'undefined') PwaAuth.showLogin();
+        OfflineSync.updateStatus(); OfflineSync.schedule(30000); return;
+      }
+      if (network.state !== 'online') { OfflineSync.updateStatus(); OfflineSync.schedule(15000); return; }
+      OfflineSync.queue.forEach(function(op) { if (op.state === 'auth') { op.state='pending'; op.errorKind=''; op.nextAttemptAt=0; OfflineSync.persist(op, true); } });
+      var op=OfflineSync.firstPending();
+      if (!op) { OfflineSync.refreshAfterDrain(); OfflineSync.updateStatus(); return; }
+      var wait=Math.max(0, Number(op.nextAttemptAt || 0) - Date.now());
+      if (wait) { OfflineSync.schedule(wait); return; }
+      OfflineSync.send(op);
+    }).catch(function() { OfflineSync.checking=false; OfflineSync.networkState='server'; OfflineSync.updateStatus(); OfflineSync.schedule(15000); });
   },
-
-  completeOperation: function(op, sendToken, result) {
-    if (OfflineSync.activeSendToken !== sendToken) return;
-    OfflineSync.activeSendToken = '';
-    OfflineSync.sending = false;
-    OfflineSync.removeOperation(op.id);
-    var handlers = OfflineSync.callbacks[op.id] || {};
-    delete OfflineSync.callbacks[op.id];
-    if (handlers.onSuccess) handlers.onSuccess(result);
-    OfflineSync.updateStatus();
-    setTimeout(function() { OfflineSync.process(); }, 50);
+  send: function(op) {
+    this.sending=true; var token=op.id + ':' + Date.now() + ':' + Math.random(); this.activeSendToken=token; this.updateStatus();
+    var timer=setTimeout(function() { OfflineSync.retryOperation(op, token, '応答待ちがタイムアウトしました'); }, 25000);
+    google.script.run.withSuccessHandler(function(res) {
+      if (OfflineSync.activeSendToken !== token) return; clearTimeout(timer);
+      if (res && res.success) OfflineSync.completeOperation(op, token, res);
+      else if (res && (res.authRequired || res.category === 'auth' || res.errorKind === 'auth')) OfflineSync.authOperation(op, token, res.error);
+      else if (res && res.retryable) OfflineSync.retryOperation(op, token, res.error);
+      else OfflineSync.failOperation(op, token, res && res.error || '保存できませんでした');
+    }).withFailureHandler(function(error) {
+      if (OfflineSync.activeSendToken !== token) return; clearTimeout(timer);
+      if (error && (error.authRequired || error.category === 'auth' || /認証|ログイン/.test(error.message || ''))) OfflineSync.authOperation(op, token, error.message);
+      else if (error && (error.retryable === false || error.category === 'validation')) OfflineSync.failOperation(op, token, OfflineSync.errorText(error));
+      else OfflineSync.retryOperation(op, token, OfflineSync.errorText(error));
+    }).executeQueuedOperation({id:op.id, type:op.type, args:op.args, createdAt:op.createdAt}, App.authToken);
   },
-
-  retryOperation: function(op, sendToken, error) {
-    if (OfflineSync.activeSendToken !== sendToken) return;
-    OfflineSync.activeSendToken = '';
-    OfflineSync.sending = false;
-    op.state = 'pending';
-    op.attempts = Number(op.attempts || 0) + 1;
-    op.error = error || '通信エラー';
-    var delays = [5000, 15000, 30000, 60000];
-    var delay = delays[Math.min(op.attempts - 1, delays.length - 1)];
-    op.nextAttemptAt = Date.now() + delay;
-    OfflineSync.saveQueue();
-    OfflineSync.updateStatus();
-    OfflineSync.schedule(delay);
+  completeOperation: function(op, token, result) {
+    if (this.activeSendToken !== token) return;
+    this.activeSendToken=''; this.sending=false; this.markRefreshNeeded(); this.removeOperation(op.id);
+    var handlers=this.callbacks[op.id] || {}; delete this.callbacks[op.id];
+    try { if (handlers.onSuccess) handlers.onSuccess(result); } catch (e) {}
+    this.updateStatus(); setTimeout(OfflineSync.process, 0);
   },
-
-  failOperation: function(op, sendToken, error) {
-    if (OfflineSync.activeSendToken !== sendToken) return;
-    OfflineSync.activeSendToken = '';
-    OfflineSync.sending = false;
-    op.state = 'failed';
-    op.error = error || '保存できませんでした';
-    OfflineSync.saveQueue();
-    var handlers = OfflineSync.callbacks[op.id] || {};
-    if (handlers.onError) handlers.onError(op.error);
-    if (typeof App !== 'undefined') App.toast('保存できない記録があります。左上の「要確認」をタップしてください');
-    OfflineSync.updateStatus();
-    setTimeout(function() { OfflineSync.process(); }, 50);
+  retryOperation: function(op, token, error) {
+    if (this.activeSendToken !== token) return;
+    this.activeSendToken=''; this.sending=false; op.state='pending'; op.errorKind='network'; op.error=error || '通信エラー'; op.attempts=Number(op.attempts || 0)+1;
+    var delay=[5000,15000,30000,60000][Math.min(op.attempts-1,3)]; op.nextAttemptAt=Date.now()+delay; this.persist(op);
+    this.networkState='unknown'; this.updateStatus(); this.schedule(delay);
   },
-
+  authOperation: function(op, token, error) {
+    if (this.activeSendToken !== token) return;
+    this.activeSendToken=''; this.sending=false; op.state='auth'; op.errorKind='auth'; op.error=error || '再ログインが必要です'; this.persist(op);
+    this.networkState='auth'; this.updateStatus(); this.schedule(30000);
+  },
+  failOperation: function(op, token, error) {
+    if (this.activeSendToken !== token) return;
+    this.activeSendToken=''; this.sending=false; op.state='failed'; op.errorKind='permanent'; op.error=error || '保存できませんでした'; this.persist(op);
+    var handlers=this.callbacks[op.id] || {}; try { if (handlers.onError) handlers.onError(op.error); } catch (e) {}
+    App.toast('要確認の記録があります。内容と理由を確認してください'); this.updateStatus(); setTimeout(OfflineSync.process, 0);
+  },
   removeOperation: function(id) {
-    OfflineSync.queue = OfflineSync.queue.filter(function(op) { return op.id !== id; });
-    OfflineSync.saveQueue();
+    try {
+      // Tombstone before removal prevents stale callbacks from resurrecting completed work.
+      localStorage.setItem(this.doneKey(id), String(Date.now())); localStorage.removeItem(this.opKey(id)); this.saveQueue();
+      if (typeof PwaSyncStore !== 'undefined') PwaSyncStore.acknowledge(id).catch(function() {}); return true;
+    } catch (e) { this.storageAvailable=false; return false; }
   },
-
+  markRefreshNeeded: function() { this.needsRefresh=true; try { localStorage.setItem(this.storageKey+':refresh','1'); } catch (e) {} },
+  refreshAfterDrain: function() {
+    if (!this.needsRefresh || this.hasUnresolved()) return;
+    if (typeof PwaShell !== 'undefined') PwaShell.backgroundRefresh(false); else App.refreshQuietly();
+  },
+  refreshCompleted: function() { if (this.hasUnresolved()) return; this.needsRefresh=false; try { localStorage.removeItem(this.storageKey+':refresh'); } catch (e) {} this.updateStatus(); },
   schedule: function(delay) {
-    if (OfflineSync.retryTimer) clearTimeout(OfflineSync.retryTimer);
-    OfflineSync.retryTimer = setTimeout(function() {
-      OfflineSync.retryTimer = null;
-      OfflineSync.process();
-    }, Math.max(100, Math.min(delay, 60000)));
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer=setTimeout(function() { OfflineSync.retryTimer=null; OfflineSync.process(); }, Math.max(100, Math.min(delay,60000)));
   },
-
-  errorText: function(e) {
-    if (!e) return '通信エラー';
-    return e.message || String(e);
-  },
-
+  errorText: function(e) { return e && (e.message || String(e)) || '通信エラー'; },
   describeOperation: function(op) {
-    var labels = {
-      recordMovement: '移動',
-      recordBTValue: 'BT値',
-      recordStatusChange: '状態変更',
-      recordMating: '種付',
-      recordFarrowing: '分娩',
-      recordWeaning: '離乳',
-      recordNursingAccident: '事故・死亡',
-      recordPenTasks: '作業記録',
-      deletePenTask: '作業取消',
-      deleteBreedingRecord: '繁殖記録削除',
-      deleteMatingRecord: '種付削除',
-      deleteFarrowingRecord: '分娩削除',
-      deleteWeaningRecord: '離乳削除',
-      updateMatingRecord: '種付修正',
-      updateFarrowingRecord: '分娩修正',
-      updateWeaningRecord: '離乳修正',
-      updateBTRecord: 'BT値修正'
-    };
-    var args = op.args || [];
-    var target = op.type === 'recordPenTasks' || op.type === 'deletePenTask'
-      ? 'Pen ' + String(args[0] || '')
-      : 'No.' + String(args[0] || '');
-    return (labels[op.type] || op.type || '記録') + ' ' + target;
+    var labels={recordMovement:'移動',recordBTValue:'BT値',recordStatusChange:'状態変更',recordMating:'種付',recordFarrowing:'分娩',recordWeaning:'離乳',recordNursingAccident:'事故・死亡',recordPenTasks:'作業記録',deletePenTask:'作業取消',deleteBreedingRecord:'繁殖記録削除',deleteMatingRecord:'種付削除',deleteFarrowingRecord:'分娩削除',deleteWeaningRecord:'離乳削除',updateMatingRecord:'種付修正',updateFarrowingRecord:'分娩修正',updateWeaningRecord:'離乳修正',updateBTRecord:'BT値修正'};
+    return (labels[op.type] || op.type)+' '+(/PenTask/.test(op.type)?'Pen ':'No.')+String((op.args || [])[0] || '');
   }
 };
 </script>

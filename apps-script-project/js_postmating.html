@@ -33,12 +33,10 @@ var PostMating = {
   },
 
   confirmDone: function(sowNo) {
-    var el = document.getElementById('postmating-' + sowNo);
-    if (el) el.style.opacity = '0.4';
-
-    PostMating.removeLocal(sowNo);
+    if (!OfflineSync.enqueue('recordStatusChange', [sowNo, '種付後測定終了', App.today()], {
+      applyLocal: function() { PostMating.removeLocal(sowNo); }
+    })) return;
     App.toast('測定終了 No.' + sowNo);
-    OfflineSync.enqueue('recordStatusChange', [sowNo, '種付後測定終了', App.today()]);
   }
 };
 </script>

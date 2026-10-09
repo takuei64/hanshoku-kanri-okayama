@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="./breeding.css">
   <link rel="stylesheet" href="./pwa.css">
   <script src="./pwa-config.js"></script>
+  <script src="./sync-store.js"></script>
   <script src="./pwa-runtime.js"></script>
 </head>
 <body>
@@ -356,6 +357,7 @@
 var __initialData = PwaStore.loadInitialData();
 var __authToken = PwaAuth.loadToken();
 </script>
+<script src="./js_snapshot.js"></script>
 <script src="./js_offline.js"></script>
 <script src="./js_app.js"></script>
 <script src="./js_breeding.js"></script>
@@ -370,7 +372,9 @@ var __authToken = PwaAuth.loadToken();
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
-    navigator.serviceWorker.register('./sw.js').catch(function() {});
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(function(registration) {
+      registration.update().catch(function() {});
+    }).catch(function() {});
   });
 }
 </script>

@@ -10,7 +10,7 @@
  *   - 初回データ: doGet()でHTMLに埋め込み
  */
 
-var CACHE_KEY_INITIAL = 'init_v23_history';
+var CACHE_KEY_INITIAL = 'init_v24_offline_metadata';
 var CACHE_KEY_MATING = 'matingMap_v4';
 var CACHE_TTL_INITIAL = 900;     // 15分
 var CACHE_TTL_MATING  = 21600;   // 6時間
@@ -150,8 +150,17 @@ function getInitialData_() {
   var pregnancyCheckList = buildPregnancyCheckListFromCurrent_(currentRows);
   var accidentList = getRecentAccidents_(ss);
   var penTaskList = buildPenTaskList_(ss, parsed, latestFarrowingMap, latestMatingMap);
+  var penMaster = getSheetData(ss, 'ペンマスタ');
+  var penList = [];
+  for (var p = 1; p < penMaster.length; p++) {
+    var pen = normalizePenNo(penMaster[p][0]);
+    if (pen) penList.push({ penNo: pen, area: String(penMaster[p][1] || '') });
+  }
+  var config = getPenTaskConfig_(ss);
+  var penTaskConfig = { farrowingTypes: config.farrowingTypes, breedingTypes: config.breedingTypes, days: config.days };
+  var sowCards = buildOfflineSowCards_(ss, currentRows);
   attachReproductiveHistory_(ss, [morningList, postMatingList, reheatCheckList, pregnancyCheckList]);
-  return { morningList: morningList, locationList: locationList, farrowingList: farrowingList, postMatingList: postMatingList, reheatCheckList: reheatCheckList, pregnancyCheckList: pregnancyCheckList, accidentList: accidentList, penTaskList: penTaskList };
+  return { morningList: morningList, locationList: locationList, farrowingList: farrowingList, postMatingList: postMatingList, reheatCheckList: reheatCheckList, pregnancyCheckList: pregnancyCheckList, accidentList: accidentList, penTaskList: penTaskList, penList: penList, penTaskConfig: penTaskConfig, sowCards: sowCards };
 }
 
 // ============================================================
@@ -346,6 +355,9 @@ function buildLocationListFromCurrent_(rows) {
       sowNo: String(r.sowNo),
       penNo: r.penNo || '未登録',
       area: r.area || '',
+      latestMoveDate: r.latestMoveDate || '',
+      latestMatingDate: r.latestMatingDate || '',
+      latestFarrowingDate: r.latestFarrowingDate || '',
       status: r.matingStatus || '',
       info: info,
       mateDays: r.latestMatingDate ? daysSince_(r.latestMatingDate, today) : 999
@@ -1163,7 +1175,7 @@ function syncCurrentStatusForSow_(ss, sowNo) {
 
 function recordMovement(sowNo, penNo, dateStr, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -1173,6 +1185,7 @@ function recordMovement(sowNo, penNo, dateStr, authToken) {
     if (!area) throw new Error('ペンマスタにないPENです。');
     var date = parseInputDate(dateStr);
     var ds = toDateString(date);
+    markQueuedMutation_();
     ss.getSheetByName('繁殖管理').appendRow([date, sn, penNo, '', '']);
     upsertCurrentRow_(ss, sn, {
       penNo: penNo,
@@ -1189,13 +1202,14 @@ function recordMovement(sowNo, penNo, dateStr, authToken) {
 
 function recordBTValue(sowNo, bt, dateStr, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
     var sn = String(sowNo);
     var date = parseInputDate(dateStr);
     var ds = toDateString(date);
+    markQueuedMutation_();
     ss.getSheetByName('繁殖管理').appendRow([date, sn, '', bt, '']);
     addBtToCurrent_(ss, sn, bt, ds);
     invalidateInitialCache_();
@@ -1207,13 +1221,14 @@ function recordBTValue(sowNo, bt, dateStr, authToken) {
 
 function recordStatusChange(sowNo, status, dateStr, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
     var sn = String(sowNo);
     var date = parseInputDate(dateStr);
     var ds = toDateString(date);
+    markQueuedMutation_();
     ss.getSheetByName('繁殖管理').appendRow([date, sn, '', '', status]);
     if (isRetiredStatus_(status)) {
       removeCurrentRow_(ss, sn);
@@ -1239,14 +1254,16 @@ function recordStatusChange(sowNo, status, dateStr, authToken) {
 
 function recordMating(sowNo, dateStr, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
     var sn = String(sowNo);
     var date = parseInputDate(dateStr);
     var ds = toDateString(date);
+    markQueuedMutation_();
     ss.getSheetByName('種付').appendRow([sn, date, '', '']);
+    markQueuedMutation_();
     ss.getSheetByName('繁殖管理').appendRow([date, sn, '', '', '通常']);
     upsertCurrentRow_(ss, sn, {
       latestMatingDate: ds,
@@ -1268,13 +1285,14 @@ function recordMating(sowNo, dateStr, authToken) {
 
 function recordFarrowing(sowNo, dateStr, totalBorn, stillBorn, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
     var sn = String(sowNo);
     var date = parseInputDate(dateStr);
     var ds = toDateString(date);
+    markQueuedMutation_();
     ss.getSheetByName('分娩').appendRow([sn, date, totalBorn || 0, stillBorn || 0]);
     upsertCurrentRow_(ss, sn, {
       latestFarrowingDate: ds,
@@ -1298,7 +1316,7 @@ function recordFarrowing(sowNo, dateStr, totalBorn, stillBorn, authToken) {
  */
 function recordWeaning(sowNo, dateStr, weanedCount, targetPen, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -1336,6 +1354,7 @@ function recordWeaning(sowNo, dateStr, weanedCount, targetPen, authToken) {
     var wroteWeaning = false;
     var wroteBreeding = false;
     try {
+      markQueuedMutation_();
       weaningSheet.getRange(weaningRow, 1, 1, 4).setValues([[sn, date, count, '']]);
       wroteWeaning = true;
       breedingSheet.getRange(breedingRow, 1, 1, 5).setValues([[date, sn, penNo, '', '離乳']]);
@@ -1368,7 +1387,7 @@ function recordWeaning(sowNo, dateStr, weanedCount, targetPen, authToken) {
 /** 個体カードから種付日を修正する。 */
 function updateMatingRecord(sowNo, oldDateStr, newDateStr, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -1391,6 +1410,7 @@ function updateMatingRecord(sowNo, oldDateStr, newDateStr, authToken) {
     }
     if (!targetRow && !alreadyUpdated) return { success: false, error: '修正対象の種付記録が見つかりません' };
 
+    markQueuedMutation_();
     if (targetRow) sheet.getRange(targetRow, 2).setValue(newDate);
 
     // 種付登録時に同時作成した「通常」記録の日付も、見つかる場合は揃える。
@@ -1436,7 +1456,7 @@ function updateWeaningRecord(sowNo, oldDateStr, oldWeaned, oldDeaths, newDateStr
 
 function updateLifecycleRecord_(sheetName, sowNo, oldDateStr, oldValue1, oldValue2,
                                 newDateStr, newValue1, newValue2, updateWeaningMove) {
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -1471,6 +1491,7 @@ function updateLifecycleRecord_(sheetName, sowNo, oldDateStr, oldValue1, oldValu
       return { success: false, error: '修正対象の' + sheetName + '記録が見つかりません' };
     }
 
+    markQueuedMutation_();
     if (targetRow) sheet.getRange(targetRow, 2, 1, 3).setValues([[newDate, value1, value2]]);
 
     // 離乳登録時に同時作成した繁殖舎移動の日付も揃える。
@@ -1500,7 +1521,7 @@ function updateLifecycleRecord_(sheetName, sowNo, oldDateStr, oldValue1, oldValu
 /** 個体カードからBT値と測定日を修正する。 */
 function updateBTRecord(sowNo, oldDateStr, oldBt, newDateStr, newBt, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -1529,6 +1550,7 @@ function updateBTRecord(sowNo, oldDateStr, oldBt, newDateStr, newBt, authToken) 
     if (!targetRow && !alreadyUpdated) return { success: false, error: '修正対象のBT記録が見つかりません' };
 
     if (targetRow) {
+      markQueuedMutation_();
       sheet.getRange(targetRow, 1).setValue(newDate);
       sheet.getRange(targetRow, 4).setValue(bt);
     }
@@ -1564,7 +1586,7 @@ function parseEditableRecordCount_(value, label, minimum) {
  */
 function deleteMatingRecord(sowNo, dateStr, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -1577,6 +1599,7 @@ function deleteMatingRecord(sowNo, dateStr, authToken) {
       if (normalizeSowNo(row[0]) !== sn) continue;
       if (dateStr && toDateString(row[1]) !== dateStr) continue;
 
+      markQueuedMutation_();
       sheet.deleteRow(i + 1);
       // 種付Mapキャッシュは末尾200行から再構築されるので、削除後はリセット
       try { getCache_().remove(CACHE_KEY_MATING); } catch(e) {}
@@ -1601,7 +1624,7 @@ function deleteWeaningRecord(sowNo, dateStr, weanedCount, deathCount, authToken)
 }
 
 function deleteLifecycleRecord_(sheetName, sowNo, dateStr, value1, value2) {
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -1617,6 +1640,7 @@ function deleteLifecycleRecord_(sheetName, sowNo, dateStr, value1, value2) {
       if (value1 !== null && value1 !== undefined && value1 !== '' && Number(row[2]) !== Number(value1)) continue;
       if (value2 !== null && value2 !== undefined && value2 !== '' && Number(row[3]) !== Number(value2)) continue;
 
+      markQueuedMutation_();
       sheet.deleteRow(i + 1);
       syncCurrentStatusForSow_(ss, sn);
       invalidateInitialCache_();
@@ -1634,7 +1658,7 @@ function deleteLifecycleRecord_(sheetName, sowNo, dateStr, value1, value2) {
  */
 function deleteBreedingRecord(sowNo, dateStr, penNo, bt, status, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -1650,6 +1674,7 @@ function deleteBreedingRecord(sowNo, dateStr, penNo, bt, status, authToken) {
       if (bt !== null && bt !== undefined && bt !== '' && Math.abs(Number(row[3]) - Number(bt)) > 0.001) continue;
       if (status && String(row[4]) !== String(status)) continue;
 
+      markQueuedMutation_();
       sheet.deleteRow(i + 1);
       syncCurrentStatusForSow_(ss, sn);
       invalidateInitialCache_();
@@ -1685,7 +1710,7 @@ function getRecentAccidents_(ss) {
 /** ほ育事故を記録 シート列: [母豚No, 日付, 頭数] */
 function recordNursingAccident(sowNo, dateStr, count, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -1697,6 +1722,7 @@ function recordNursingAccident(sowNo, dateStr, count, authToken) {
       sheet.getRange('B2:B').setNumberFormat('yyyy/mm/dd');
     }
     var sn = String(sowNo);
+    markQueuedMutation_();
     sheet.appendRow([sn, parseInputDate(dateStr), count]);
     invalidateInitialCache_();
     return { success: true };

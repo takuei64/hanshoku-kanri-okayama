@@ -26,6 +26,26 @@ function isAuthTokenValid_(token) {
 
 function requireAuth_(token) {
   if (!isAuthTokenValid_(token)) {
-    throw new Error('認証が切れました。もう一度パスワードを入力してください。');
+    var error = new Error('認証が切れました。もう一度パスワードを入力してください。');
+    error.code = 'AUTH_REQUIRED';
+    throw error;
+  }
+}
+
+/** 疎通確認は認証不要。業務データや認証情報を返さず、シートも開かない。 */
+function ping(authToken) {
+  try {
+    var authenticated = isAuthTokenValid_(authToken);
+    return {
+      reachable: true, authenticated: authenticated,
+      status: authenticated ? 'online' : 'auth', authRequired: !authenticated,
+      retryable: false, protocolVersion: 2
+    };
+  } catch (error) {
+    return {
+      reachable: true, authenticated: false, status: 'server',
+      authRequired: false, retryable: true, errorKind: 'network',
+      error: '認証サービスへ一時的に接続できません。', protocolVersion: 2
+    };
   }
 }

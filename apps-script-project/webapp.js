@@ -38,15 +38,15 @@ function handlePwaJsonp_(e, token) {
   var requestId = String((e && e.parameter && e.parameter.requestId) || '');
   var method = String((e && e.parameter && e.parameter.method) || '');
   var response = { requestId: requestId, ok: false, result: null, error: '' };
+  var transport = String((e && e.parameter && e.parameter.transport) || '');
+
+  function output() { return createPwaOutput_(response, transport); }
 
   if (!/^[A-Za-z0-9_-]{6,80}$/.test(requestId)) {
     response.error = '通信IDが不正です';
-    return createPwaJsonpOutput_(response);
-  }
-  if (!isAuthTokenValid_(token)) {
-    response.error = '認証が切れました。もう一度パスワードを入力してください。';
-    response.authRequired = true;
-    return createPwaJsonpOutput_(response);
+    response.errorKind = 'permanent';
+    response.retryable = false;
+    return output();
   }
 
   var args;
@@ -54,14 +54,24 @@ function handlePwaJsonp_(e, token) {
     args = JSON.parse(String((e && e.parameter && e.parameter.payload) || '[]'));
   } catch (parseError) {
     response.error = '送信内容を読み取れませんでした';
-    return createPwaJsonpOutput_(response);
+    response.errorKind = 'permanent';
+    response.retryable = false;
+    return output();
   }
   if (!Array.isArray(args)) {
     response.error = '送信内容が不正です';
-    return createPwaJsonpOutput_(response);
+    response.errorKind = 'permanent';
+    response.retryable = false;
+    return output();
   }
 
   try {
+    if (method === 'ping' && args.length === 0) {
+      response.result = ping(token);
+      response.ok = true;
+      return output();
+    }
+    requireAuth_(token);
     if (method === 'getInitialDataCached' && args.length === 0) {
       response.result = getInitialDataCached(token);
     } else if (method === 'refreshAllData' && args.length === 0) {
@@ -72,12 +82,24 @@ function handlePwaJsonp_(e, token) {
       response.result = executeQueuedOperation(args[0], token);
     } else {
       response.error = '未対応の通信処理です';
-      return createPwaJsonpOutput_(response);
+      response.errorKind = 'permanent';
+      response.retryable = false;
+      return output();
     }
     response.ok = true;
   } catch (error) {
     response.error = error && error.message ? error.message : String(error || '処理できませんでした');
-    if (response.error.indexOf('認証が切れました') >= 0) response.authRequired = true;
+    response.authRequired = error.code === 'AUTH_REQUIRED' || response.error.indexOf('認証が切れました') >= 0;
+    response.errorKind = response.authRequired ? 'auth' : 'network';
+    response.retryable = !response.authRequired;
+  }
+  return output();
+}
+
+/** Service Worker はスクリプトを実行せず JSON として同じ限定APIを利用する。 */
+function createPwaOutput_(response, transport) {
+  if (transport === 'json') {
+    return ContentService.createTextOutput(JSON.stringify(response)).setMimeType(ContentService.MimeType.JSON);
   }
   return createPwaJsonpOutput_(response);
 }

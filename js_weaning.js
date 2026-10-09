@@ -72,15 +72,19 @@ var Weaning = {
       return;
     }
 
+    if (!OfflineSync.enqueue('recordWeaning', [sowNo, dateStr, weanedCount, targetPen], { applyLocal: function() {
+      Weaning.applyLocal(sowNo, targetPen, dateStr);
+      Weaning.render();
+    } })) return;
     App.hideModal('weaning-modal');
-    Weaning.applyLocal(sowNo, targetPen, dateStr);
-    Weaning.render();
-    OfflineSync.enqueue('recordWeaning', [sowNo, dateStr, weanedCount, targetPen]);
     App.toast('離乳・移動を記録しました');
   },
 
   applyLocal: function(sowNo, targetPen, dateStr) {
     var sn = String(sowNo);
+    var current = SowLocation.findSow(sn);
+    if (current && current.latestMoveDate && dateStr < current.latestMoveDate) return;
+    SowLocation.applyMovementLocal(sn, targetPen, dateStr, '繁殖舎');
     var i;
     for (i = 0; i < SowLocation.list.length; i++) {
       if (String(SowLocation.list[i].sowNo) !== sn) continue;
@@ -95,6 +99,8 @@ var Weaning = {
     Breeding.list.push({
       sowNo: sn,
       penNo: String(targetPen),
+      area: '繁殖舎',
+      latestMoveDate: dateStr,
       reason: '離乳移動 0日目',
       days: 0,
       group: 1,
@@ -109,15 +115,6 @@ var Weaning = {
     ReheatCheck.list = ReheatCheck.list.filter(function(s) { return String(s.sowNo) !== sn; });
     PostMating.list = PostMating.list.filter(function(s) { return String(s.sowNo) !== sn; });
     PregCheck.list = PregCheck.list.filter(function(s) { return String(s.sowNo) !== sn; });
-    for (i = 0; i < PenTask.list.length; i++) {
-      PenTask.list[i].sows = PenTask.list[i].sows.filter(function(no) { return String(no) !== sn; });
-    }
-    PenTask.list = PenTask.list.filter(function(p) { return p.sows.length > 0; });
-
-    if (App.currentPage === 'location') SowLocation.render();
-    if (App.currentPage === 'breeding') Breeding.render();
-    if (App.currentPage === 'farrowing') Farrowing.render();
-    if (App.currentPage === 'pregcheck') PregCheck.render();
-    if (App.currentPage === 'pentask') PenTask.render();
+    SowLocation.renderRelated();
   }
 };

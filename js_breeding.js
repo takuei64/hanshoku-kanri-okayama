@@ -176,6 +176,7 @@ var Breeding = {
     sowNo = String(sowNo);
     for (var i = 0; i < Breeding.list.length; i++) {
       if (String(Breeding.list[i].sowNo) === sowNo) {
+        if (!Breeding.list[i].btHistory) Breeding.list[i].btHistory = [];
         Breeding.list[i].btHistory.unshift({ date: dateStr, bt: bt });
         if (Breeding.list[i].btHistory.length > 7) Breeding.list[i].btHistory.pop();
         break;
@@ -200,8 +201,11 @@ var Breeding = {
 
     if (!sowNo) { App.toast('母豚番号を入力してください'); return; }
     if (!penNo) { App.toast('ペンNoを入力してください'); return; }
+    if (!dateStr) { App.toast('移動日を入力してください'); return; }
 
-    OfflineSync.enqueue('recordMovement', [sowNo, penNo, dateStr]);
+    if (!OfflineSync.enqueue('recordMovement', [sowNo, penNo, dateStr], {
+      applyLocal: function() { SowLocation.applyMovementLocal(sowNo, penNo, dateStr); }
+    })) return;
     document.getElementById('move-sow').value = '';
     document.getElementById('move-pen').value = '';
     App.toast('移動を記録しました');
@@ -222,19 +226,13 @@ var Breeding = {
     if (isNaN(bt)) { App.toast('BT値を入力してください'); return; }
 
     var sowNo = Breeding.selectedSow;
-    App.hideModal('bt-modal');
-
-    // ローカル更新（即座に反映）
-    Breeding.addBTLocal(sowNo, bt, dateStr);
-    if (typeof ReheatCheck !== 'undefined' && ReheatCheck.addBTLocal) {
+    if (!OfflineSync.enqueue('recordBTValue', [sowNo, bt, dateStr], { applyLocal: function() {
+      Breeding.addBTLocal(sowNo, bt, dateStr);
       ReheatCheck.addBTLocal(sowNo, bt, dateStr);
-    }
-    if (typeof PostMating !== 'undefined' && PostMating.addBTLocal) {
       PostMating.addBTLocal(sowNo, bt, dateStr);
-    }
+    } })) return;
+    App.hideModal('bt-modal');
     App.toast('BT値を記録しました');
-
-    OfflineSync.enqueue('recordBTValue', [sowNo, bt, dateStr]);
   },
 
   // --- 種付実施（モーダル） ---
@@ -260,22 +258,23 @@ var Breeding = {
     var action = Breeding.pendingAction;
     if (!action) return;
     var dateStr = document.getElementById('status-date').value;
-    App.hideModal('status-modal');
-
     if (action.type === 'mating') {
+      if (!OfflineSync.enqueue('recordMating', [action.sowNo, dateStr], {
+        applyLocal: function() { Breeding.render(); }
+      })) return;
       App.toast('種付実施を記録しました');
-      OfflineSync.enqueue('recordMating', [action.sowNo, dateStr]);
-      Breeding.render();
     } else {
+      if (!OfflineSync.enqueue('recordStatusChange', [action.sowNo, action.status, dateStr], { applyLocal: function() {
       // ステータス変更のみチェック対象から外す。種付はリストに残す。
       if (action.status === '廃用' && typeof SowLocation !== 'undefined' && SowLocation.removeSowLocal) {
         SowLocation.removeSowLocal(action.sowNo);
       } else {
         Breeding.removeCard(action.sowNo);
       }
+      } })) return;
       App.toast(action.status + ' を記録しました');
-      OfflineSync.enqueue('recordStatusChange', [action.sowNo, action.status, dateStr]);
     }
+    App.hideModal('status-modal');
     Breeding.pendingAction = null;
   },
 
@@ -306,9 +305,10 @@ var Breeding = {
   confirmDeleteBT: function(sowNo, dateStr, bt) {
     if (!confirm('BT値 ' + bt + '（' + dateStr + '）を削除しますか？')) return;
     sowNo = String(sowNo);
-    Breeding.removeBTLocal(sowNo, dateStr, bt);
-    Breeding.render();
+    if (!OfflineSync.enqueue('deleteBreedingRecord', [sowNo, dateStr, '', bt, ''], { applyLocal: function() {
+      Breeding.removeBTLocal(sowNo, dateStr, bt);
+      Breeding.render();
+    } })) return;
     App.toast('削除しました');
-    OfflineSync.enqueue('deleteBreedingRecord', [sowNo, dateStr, '', bt, '']);
   }
 };

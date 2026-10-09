@@ -118,7 +118,8 @@ test('更新で別農場のオフライン用キャッシュを消さない', as
   let activate;
   const removed = [];
   const c = vm.createContext({
-    self: { addEventListener(name, fn) { if (name === 'activate') activate = fn; }, clients: { claim() {} } },
+    importScripts() {},
+    self: { addEventListener(name, fn) { if (name === 'activate') activate = fn; }, clients: { claim() {}, matchAll: async () => [] } },
     caches: { keys: async () => ['breeding-pwa-old', 'breeding-okayama-pwa-old', 'another-app'], delete: async key => removed.push(key) }
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'sw.js'), 'utf8'), c);

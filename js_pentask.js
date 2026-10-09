@@ -18,12 +18,47 @@ var PenTask = {
   getTaskTypes: function(pen) {
     if (pen && pen.taskTypes && pen.taskTypes.length) return pen.taskTypes;
     var areaType = pen && pen.areaType;
+    var masterTypes = areaType === 'breeding' ? PenTask.breedingTaskTypes : PenTask.farrowingTaskTypes;
+    if (masterTypes && masterTypes.length) return masterTypes;
     for (var i = 0; i < PenTask.list.length; i++) {
       if (PenTask.list[i].areaType === areaType && PenTask.list[i].taskTypes && PenTask.list[i].taskTypes.length) {
         return PenTask.list[i].taskTypes;
       }
     }
     return [];
+  },
+
+  moveSowLocal: function(sowNo, penNo, area, dateStr, sow) {
+    var sn = String(sowNo);
+    var pen = String(penNo);
+    var areaType = /^(ストール|交配舎|種付舎|繁殖舎)$/.test(area) ? 'breeding' : area === '分娩舎' ? 'farrowing' : '';
+    // マスタが旧スナップショットにない場合も、既存行から作業種別を退避する。
+    var types = areaType ? PenTask.getTaskTypes({ areaType: areaType }).slice() : [];
+    PenTask.list.forEach(function(p) {
+      p.sows = (p.sows || []).filter(function(no) { return String(no) !== sn; });
+    });
+    var destination = PenTask.findPen(pen);
+    if (areaType && !destination) {
+      var matingDate = sow && sow.latestMatingDate;
+      if (sow && sow.latestFarrowingDate && matingDate && sow.latestFarrowingDate >= matingDate) matingDate = '';
+      var startDate = areaType === 'farrowing' ? ((sow && sow.latestFarrowingDate) || dateStr) : (matingDate || dateStr);
+      var age = Math.max(0, Math.floor((Date.parse(App.today()) - Date.parse(startDate)) / 86400000)) || 0;
+      var tasks = {};
+      types.forEach(function(type) {
+        var dueDay = PenTask.dueDays[type] || 0;
+        tasks[type] = { date: '', state: dueDay && age >= dueDay ? 'overdue' : 'pending', dueDay: dueDay };
+      });
+      destination = {
+        areaType: areaType, penNo: pen, sows: [], startDate: startDate,
+        startSource: areaType === 'farrowing' && sow && sow.latestFarrowingDate ? 'farrow' : areaType === 'breeding' && matingDate ? 'mating' : 'move',
+        ageDays: age, dayLabel: areaType === 'breeding' ? '種付後' : '日齢', taskTypes: types, tasks: tasks
+      };
+      PenTask.list.push(destination);
+    }
+    if (destination) destination.sows.push(sn);
+    // 作業はPen単位なので、移動元の実施済み履歴を移動先へコピーしない。
+    PenTask.list = PenTask.list.filter(function(p) { return p.sows.length; });
+    PenTask.list.sort(function(a, b) { return (parseInt(a.penNo, 10) || 99999) - (parseInt(b.penNo, 10) || 99999); });
   },
 
   renderGroup: function(rows, areaType) {
@@ -131,34 +166,36 @@ var PenTask = {
     for (var i = 0; i < checks.length; i++) types.push(checks[i].value);
     if (types.length === 0) { App.toast('作業を1つ以上選択してください'); return; }
 
-    App.hideModal('pentask-modal');
-    for (var p = 0; p < PenTask.list.length; p++) {
+    if (!OfflineSync.enqueue('recordPenTasks', [penNo, types, dateStr], { applyLocal: function() {
+      for (var p = 0; p < PenTask.list.length; p++) {
       if (String(PenTask.list[p].penNo) !== String(penNo)) continue;
       for (var j = 0; j < types.length; j++) {
         var oldTask = PenTask.list[p].tasks[types[j]] || {};
         PenTask.list[p].tasks[types[j]] = { date: dateStr, state: 'done', dueDay: oldTask.dueDay || 0 };
       }
       break;
-    }
-    PenTask.render();
-    OfflineSync.enqueue('recordPenTasks', [penNo, types, dateStr]);
+      }
+      PenTask.render();
+    } })) return;
+    App.hideModal('pentask-modal');
     App.toast(types.length + '件記録しました');
   },
 
   undo: function(type, dateStr) {
     var penNo = PenTask.selectedPen;
     if (!confirm(type + ' (' + dateStr + ') を取り消しますか？')) return;
-    for (var i = 0; i < PenTask.list.length; i++) {
+    if (!OfflineSync.enqueue('deletePenTask', [penNo, type, dateStr], { applyLocal: function() {
+      for (var i = 0; i < PenTask.list.length; i++) {
       if (String(PenTask.list[i].penNo) !== String(penNo)) continue;
       var t = PenTask.list[i].tasks[type];
       var dueDay = t ? t.dueDay : 21;
       var newState = PenTask.list[i].ageDays >= dueDay ? 'overdue' : 'pending';
       PenTask.list[i].tasks[type] = { date: '', state: newState, dueDay: dueDay };
       break;
-    }
-    PenTask.openModal(penNo);
-    PenTask.render();
-    OfflineSync.enqueue('deletePenTask', [penNo, type, dateStr]);
+      }
+      PenTask.openModal(penNo);
+      PenTask.render();
+    } })) return;
     App.toast('取り消しました');
   }
 };

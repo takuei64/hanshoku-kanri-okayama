@@ -36,11 +36,9 @@ var ReheatCheck = {
   },
 
   confirmDone: function(sowNo) {
-    var el = document.getElementById('reheat-' + sowNo);
-    if (el) el.style.opacity = '0.4';
-
-    ReheatCheck.removeLocal(sowNo);
+    if (!OfflineSync.enqueue('recordStatusChange', [sowNo, '再発情確認終了', App.today()], {
+      applyLocal: function() { ReheatCheck.removeLocal(sowNo); }
+    })) return;
     App.toast('確認済 No.' + sowNo);
-    OfflineSync.enqueue('recordStatusChange', [sowNo, '再発情確認終了', App.today()]);
   }
 };
