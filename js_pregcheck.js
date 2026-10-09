@@ -35,8 +35,6 @@ var PregCheck = {
   },
 
   confirm: function(sowNo, status) {
-    var el = document.getElementById('preg-' + sowNo);
-    if (el) el.style.opacity = '0.4';
     var pregRow = null;
     for (var i = 0; i < PregCheck.list.length; i++) {
       if (String(PregCheck.list[i].sowNo) === String(sowNo)) {
@@ -46,10 +44,9 @@ var PregCheck = {
     }
 
     var dateStr = App.today();
-    App.toast(status + ' No.' + sowNo);
-
+    if (!OfflineSync.enqueue('recordStatusChange', [sowNo, status, dateStr], { applyLocal: function() {
     // ローカルで除去
-    PregCheck.list = PregCheck.list.filter(function(s) { return s.sowNo !== sowNo; });
+    PregCheck.list = PregCheck.list.filter(function(s) { return String(s.sowNo) !== String(sowNo); });
     setTimeout(function() { PregCheck.render(); }, 500);
 
     if (status === '空胎' && pregRow && typeof Breeding !== 'undefined') {
@@ -67,6 +64,9 @@ var PregCheck = {
       // 並び順は統合リストの描画時にペン番号昇順へ揃えられる
     }
 
-    OfflineSync.enqueue('recordStatusChange', [sowNo, status, dateStr]);
+    var location = SowLocation.findSow(sowNo);
+    if (location) location.status = status;
+    } })) return;
+    App.toast(status + ' No.' + sowNo);
   }
 };

@@ -3,8 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test:backend": "node --test tests/backend-update.test.js",
-    "test:pwa": "playwright test tests/pwa-offline.spec.js --reporter=line --workers=1"
+    "test": "node --test tests/*.test.js test/*.test.cjs",
+    "test:backend": "node --test tests/backend-*.test.js",
+    "test:pwa": "playwright test --reporter=line --workers=1"
   },
   "devDependencies": {
     "@playwright/test": "1.62.1"

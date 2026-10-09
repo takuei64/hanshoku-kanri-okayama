@@ -58,6 +58,27 @@
   font-weight: 700;
 }
 
+.pwa-auth-prompt {
+  position: fixed;
+  left: 8px;
+  right: 8px;
+  bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e4b751;
+  border-radius: 8px;
+  background: #fff8df;
+  color: #473500;
+  font-size: 12px;
+}
+
+.pwa-auth-prompt[hidden] { display: none; }
+.pwa-auth-prompt button { flex: 0 0 auto; min-height: 38px; border: 0; border-radius: 6px; background: #1a73e8; color: #fff; }
+.pwa-update-notice { position: fixed; top: calc(60px + env(safe-area-inset-top, 0px)); right: 6px; z-index: 90; max-width: 270px; padding: 9px; border: 1px solid #9bb6d8; border-radius: 6px; background: #eaf2fc; color: #153c65; font-size: 12px; }
+
 .pwa-login-card {
   display: flex;
   height: min(680px, calc(100dvh - 32px));

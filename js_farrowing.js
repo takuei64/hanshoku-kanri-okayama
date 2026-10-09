@@ -78,9 +78,9 @@ var Farrowing = {
       '死産数: ' + still
     )) return;
 
+    if (!OfflineSync.enqueue('recordFarrowing', [sowNo, dateStr, total, still])) return;
     App.hideModal('farrow-record-modal');
     App.toast('分娩を記録しました');
-    OfflineSync.enqueue('recordFarrowing', [sowNo, dateStr, total, still]);
   },
 
   // ほ育事故
@@ -102,11 +102,12 @@ var Farrowing = {
     if (!sowNo) { App.toast('母豚Noを入力してください'); return; }
     if (count <= 0) { App.toast('頭数を入力してください'); return; }
 
-    OfflineSync.enqueue('recordNursingAccident', [sowNo, dateStr, count]);
+    if (!OfflineSync.enqueue('recordNursingAccident', [sowNo, dateStr, count], { applyLocal: function() {
+      Farrowing.accidentList.unshift({ sowNo: sowNo, date: dateStr, count: count });
+      Farrowing.renderAccidents();
+    } })) return;
     document.getElementById('accident-sow').value = '';
     document.getElementById('accident-count').value = '';
-    Farrowing.accidentList.unshift({ sowNo: sowNo, date: dateStr, count: count });
-    Farrowing.renderAccidents();
     App.toast('ほ育事故を記録しました');
   },
 
@@ -129,17 +130,12 @@ var Farrowing = {
     var penNo = document.getElementById('farrow-move-pen').value.trim();
     var dateStr = document.getElementById('farrow-move-date').value;
     if (!penNo) { App.toast('移動先ペンNoを入力してください'); return; }
+    if (!dateStr) { App.toast('移動日を入力してください'); return; }
 
+    if (!OfflineSync.enqueue('recordMovement', [sowNo, penNo, dateStr], {
+      applyLocal: function() { SowLocation.applyMovementLocal(sowNo, penNo, dateStr, '分娩舎'); }
+    })) return;
     App.hideModal('farrow-move-modal');
-
-    for (var i = 0; i < Farrowing.list.length; i++) {
-      if (String(Farrowing.list[i].sowNo) === String(sowNo)) {
-        Farrowing.list[i].penNo = penNo;
-        break;
-      }
-    }
-    Farrowing.render();
     App.toast('分娩舎移動を記録しました');
-    OfflineSync.enqueue('recordMovement', [sowNo, penNo, dateStr]);
   }
 };
