@@ -252,7 +252,7 @@ function debugPenTaskAge_() {
  */
 function recordPenTasks(penNo, types, dateStr, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -267,6 +267,7 @@ function recordPenTasks(penNo, types, dateStr, authToken) {
       rows.push([date, Number(penNo) || penNo, type]);
     }
     if (rows.length === 0) return { success: false, error: '作業種別が選択されていません' };
+    markQueuedMutation_();
     sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 3).setValues(rows);
     invalidateInitialCache_();
     return { success: true, count: rows.length };
@@ -280,7 +281,7 @@ function recordPenTasks(penNo, types, dateStr, authToken) {
  */
 function deletePenTask(penNo, type, dateStr, authToken) {
   requireAuth_(authToken);
-  var lock = LockService.getScriptLock();
+  var lock = getQueuedWriteLock_();
   try {
     lock.waitLock(10000);
     var ss = getSpreadsheet();
@@ -293,6 +294,7 @@ function deletePenTask(penNo, type, dateStr, authToken) {
       if (String(row[1]) !== penKey) continue;
       if (String(row[2]) !== String(type)) continue;
       if (dateStr && toDateString(row[0]) !== dateStr) continue;
+      markQueuedMutation_();
       sheet.deleteRow(i + 1);
       invalidateInitialCache_();
       return { success: true };

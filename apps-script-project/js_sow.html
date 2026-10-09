@@ -12,6 +12,76 @@ var SowLocation = {
   moveSowNo: null,
   actionSowNo: null,
 
+  findSow: function(sowNo) {
+    return SowLocation.list.find(function(s) { return String(s.sowNo) === String(sowNo); });
+  },
+
+  penArea: function(penNo, fallback) {
+    var pen = String(penNo);
+    var master = App.penList || [];
+    for (var i = 0; i < master.length; i++) {
+      if (String(master[i].penNo) === pen) return master[i].area || '';
+    }
+    var known = SowLocation.list.find(function(s) { return String(s.penNo) === pen && s.area; });
+    if (known) return known.area;
+    var task = PenTask.findPen(pen);
+    return task ? (task.areaType === 'breeding' ? '繁殖舎' : '分娩舎') : (fallback || '');
+  },
+
+  /** 全移動経路で同じ現在地を使い、作業の対象も移動先へ合わせる。 */
+  applyMovementLocal: function(sowNo, penNo, dateStr, areaHint) {
+    var sn = String(sowNo);
+    var pen = String(penNo);
+    var area = SowLocation.penArea(pen, areaHint);
+    var location = SowLocation.findSow(sn);
+    // 過去日付の記録は残すが、より新しい現在地を巻き戻さない。
+    if (location && location.latestMoveDate && dateStr < location.latestMoveDate) return;
+    var lists = [SowLocation.list, Breeding.list, PostMating.list, ReheatCheck.list, Farrowing.list, PregCheck.list];
+    lists.forEach(function(list) {
+      list.forEach(function(s) {
+        if (String(s.sowNo) !== sn) return;
+        s.penNo = pen;
+        s.area = area;
+        s.latestMoveDate = dateStr;
+      });
+    });
+    if (!location) {
+      location = { sowNo: sn, penNo: pen, area: area, latestMoveDate: dateStr, status: '', info: '' };
+      SowLocation.list.push(location);
+    }
+    var isBreeding = /^(ストール|交配舎|種付舎|繁殖舎)$/.test(area);
+    if (area && !isBreeding) {
+      Breeding.list = Breeding.list.filter(function(s) { return String(s.sowNo) !== sn; });
+    } else if (isBreeding && !Breeding.list.some(function(s) { return String(s.sowNo) === sn; })) {
+      var movedAfterFarrow = location.latestFarrowingDate && (!location.latestMatingDate || location.latestFarrowingDate >= location.latestMatingDate);
+      if (movedAfterFarrow || !location.latestMatingDate) {
+        var days = Math.max(0, Math.floor((Date.parse(App.today()) - Date.parse(dateStr)) / 86400000)) || 0;
+        Breeding.list.push({ sowNo: sn, penNo: pen, area: area, latestMoveDate: dateStr,
+          reason: (movedAfterFarrow ? '離乳移動 ' : '育成/移動 ') + days + '日目',
+          group: movedAfterFarrow ? 1 : 2, days: days, status: location.status || '', btHistory: [] });
+      }
+    }
+    SowLocation.list.sort(function(a, b) { return (parseInt(a.penNo, 10) || 99999) - (parseInt(b.penNo, 10) || 99999); });
+    PenTask.moveSowLocal(sn, pen, area, dateStr, location);
+    var card = SowCard.loadCached(sn);
+    if (card) {
+      var baseline = JSON.parse(JSON.stringify(card));
+      card.currentPen = pen;
+      card.latestMoveDate = dateStr;
+      SowCard.saveCached(sn, card, baseline);
+    }
+    SowLocation.renderRelated();
+  },
+
+  renderRelated: function() {
+    if (App.currentPage === 'location') SowLocation.render();
+    if (App.currentPage === 'breeding') Breeding.render();
+    if (App.currentPage === 'farrowing') Farrowing.render();
+    if (App.currentPage === 'weaning') Weaning.render();
+    if (App.currentPage === 'pregcheck') PregCheck.render();
+    if (App.currentPage === 'pentask') PenTask.render();
+  },
+
   filter: function() {
     var query = (document.getElementById('location-search').value || '').trim();
     var filtered = SowLocation.list;
@@ -84,8 +154,9 @@ var SowLocation = {
     App.hideModal('loc-action-sheet');
     var sowNo = SowLocation.actionSowNo;
     if (!confirm('No.' + sowNo + ' を廃用にしますか？')) return;
-    SowLocation.removeSowLocal(sowNo);
-    OfflineSync.enqueue('recordStatusChange', [sowNo, '廃用', App.today()]);
+    if (!OfflineSync.enqueue('recordStatusChange', [sowNo, '廃用', App.today()], {
+      applyLocal: function() { SowLocation.removeSowLocal(sowNo); }
+    })) return;
     App.toast('廃用を記録しました');
   },
 
@@ -171,9 +242,10 @@ var SowLocation = {
 
     if (count <= 0) { App.toast('頭数を入力してください'); return; }
 
-    OfflineSync.enqueue('recordNursingAccident', [sowNo, dateStr, count]);
+    if (!OfflineSync.enqueue('recordNursingAccident', [sowNo, dateStr, count], {
+      applyLocal: function() { Farrowing.accidentList.unshift({ sowNo: sowNo, date: dateStr, count: count }); }
+    })) return;
     App.hideModal('death-modal');
-    Farrowing.accidentList.unshift({ sowNo: sowNo, date: dateStr, count: count });
     App.toast('子豚死亡を登録しました');
   },
 
@@ -189,18 +261,13 @@ var SowLocation = {
     var penNo = document.getElementById('loc-move-pen').value.trim();
     var dateStr = document.getElementById('loc-move-date').value;
     if (!penNo) { App.toast('ペンNoを入力してください'); return; }
+    if (!dateStr) { App.toast('移動日を入力してください'); return; }
 
-    App.hideModal('loc-move-modal');
     var sowNo = SowLocation.moveSowNo;
-
-    for (var i = 0; i < SowLocation.list.length; i++) {
-      if (SowLocation.list[i].sowNo === sowNo) {
-        SowLocation.list[i].penNo = penNo;
-        break;
-      }
-    }
-    SowLocation.render();
-    OfflineSync.enqueue('recordMovement', [sowNo, penNo, dateStr]);
+    if (!OfflineSync.enqueue('recordMovement', [sowNo, penNo, dateStr], {
+      applyLocal: function() { SowLocation.applyMovementLocal(sowNo, penNo, dateStr); }
+    })) return;
+    App.hideModal('loc-move-modal');
     App.toast('移動を記録しました');
   }
 };
@@ -210,8 +277,34 @@ var SowCard = {
   currentData: null,
   editIndex: -1,
   editOriginal: null,
+  editBaseline: null,
 
-  search: function(sowNo) {
+  saveCached: function(sowNo, data, baseline) {
+    try {
+      var key = 'hanshoku-kanri-okayama-v1:sow-card:' + String(sowNo);
+      // Local edits merge only their own changes into the latest card. Server
+      // refreshes omit baseline and replace the card after the revision check.
+      if (baseline && typeof SnapshotPatch !== 'undefined') {
+        var latest = JSON.parse(localStorage.getItem(key) || 'null') || baseline;
+        data = SnapshotPatch.apply(latest, SnapshotPatch.diff(baseline, data));
+        if (data.timeline) data.timeline.sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); });
+      }
+      localStorage.setItem(key, JSON.stringify(data));
+      if (SowCard.currentData && String(SowCard.currentData.info.sowNo) === String(sowNo)) SowCard.currentData = data;
+      return true;
+    } catch (e) { return false; }
+  },
+
+  loadCached: function(sowNo) {
+    try {
+      var saved = JSON.parse(localStorage.getItem('hanshoku-kanri-okayama-v1:sow-card:' + String(sowNo)) || 'null');
+      if (saved) return saved;
+    } catch (e) {}
+    if (SowCard.currentData && String(SowCard.currentData.info.sowNo) === String(sowNo)) return SowCard.currentData;
+    return null;
+  },
+
+  search: function(sowNo, refresh) {
     if (!sowNo) {
       sowNo = parseInt(document.getElementById('card-search-input').value);
     } else {
@@ -219,7 +312,14 @@ var SowCard = {
     }
     if (!sowNo) { App.toast('母豚番号を入力してください'); return; }
 
-    App.showLoading();
+    var cached = SowCard.loadCached(sowNo);
+    if (cached) {
+      SowCard.render(cached);
+      if (OfflineSync.queue.length || navigator.onLine === false) return;
+    }
+
+    var revision = OfflineSync.mutationRevision ? OfflineSync.mutationRevision() : '';
+    if (!cached) App.showLoading();
     google.script.run
       .withSuccessHandler(function(data) {
         App.hideLoading();
@@ -229,6 +329,10 @@ var SowCard = {
             '<div class="empty-state"><div>' + data.error + '</div></div>';
           return;
         }
+        // 検索の通信中に入力された変更も、古い応答で上書きしない。
+        if ((OfflineSync.mutationRevision && OfflineSync.mutationRevision() !== revision) ||
+            (OfflineSync.queue.length && SowCard.loadCached(sowNo))) return;
+        SowCard.saveCached(sowNo, data);
         SowCard.render(data);
       })
       .withFailureHandler(function(e) {
@@ -305,6 +409,7 @@ var SowCard = {
 
     SowCard.editIndex = index;
     SowCard.editOriginal = JSON.parse(JSON.stringify(record));
+    SowCard.editBaseline = JSON.parse(JSON.stringify(data));
     var label = record.event === '繁殖管理' ? 'BT値' : record.event;
     document.getElementById('history-edit-title').textContent = label + 'を修正';
     document.getElementById('history-edit-sow').textContent = '母豚No.' + data.info.sowNo;
@@ -354,6 +459,8 @@ var SowCard = {
     var data = SowCard.currentData;
     var original = SowCard.editOriginal;
     if (!data || !original || SowCard.editIndex < 0) return;
+    var baseline = SowCard.editBaseline || JSON.parse(JSON.stringify(data));
+    data = JSON.parse(JSON.stringify(baseline));
 
     var sowNo = String(data.info.sowNo);
     var newDate = document.getElementById('history-edit-date').value;
@@ -411,25 +518,55 @@ var SowCard = {
       '変更後: ' + SowCard.editSummary(updated)
     )) return;
 
-    App.hideModal('history-edit-modal');
-    data.timeline[SowCard.editIndex] = updated;
-    data.timeline.sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); });
-    if (typeof PwaStore !== 'undefined') PwaStore.saveCard(sowNo, data);
-    SowCard.render(data);
-    OfflineSync.enqueue(operationType, operationArgs, {
+    if (!OfflineSync.enqueue(operationType, operationArgs, {
+      applyLocal: function() {
+        data.timeline[SowCard.editIndex] = updated;
+        data.timeline.sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); });
+        var saved = SowCard.saveCached(sowNo, data, baseline);
+        SowCard.render(saved ? SowCard.loadCached(sowNo) : data);
+        if (original.event === '繁殖管理') {
+          Breeding.removeBTLocal(sowNo, original.date, original._bt);
+          Breeding.addBTLocal(sowNo, updated._bt, newDate);
+          PostMating.addBTLocal(sowNo, updated._bt, newDate);
+          ReheatCheck.addBTLocal(sowNo, updated._bt, newDate);
+        }
+      },
       onSuccess: function() { SowCard.refreshIfVisible(sowNo); }
-    });
+    })) return;
+    App.hideModal('history-edit-modal');
     SowCard.editIndex = -1;
     SowCard.editOriginal = null;
+    SowCard.editBaseline = null;
     App.toast(label + 'を修正しました');
   },
 
   refreshIfVisible: function(sowNo) {
+    if (OfflineSync.queue.length) return;
     var cardPage = document.getElementById('page-sowcard');
     var input = document.getElementById('card-search-input');
     if (cardPage && cardPage.classList.contains('active') && input && String(input.value) === String(sowNo)) {
-      SowCard.search(sowNo);
+      SowCard.search(sowNo, true);
     }
+  },
+
+  removeRecordLocal: function(sowNo, event, dateStr, fields) {
+    var data = SowCard.loadCached(sowNo);
+    if (!data) return;
+    var baseline = JSON.parse(JSON.stringify(data));
+    var timeline = data.timeline || [];
+    for (var i = timeline.length - 1; i >= 0; i--) {
+      var record = timeline[i];
+      if (record.event !== event || String(record.date) !== String(dateStr)) continue;
+      var matches = Object.keys(fields || {}).every(function(key) {
+        var expected = fields[key];
+        return expected === '' || expected === null || expected === undefined || String(record[key]) === String(expected);
+      });
+      if (!matches) continue;
+      timeline.splice(i, 1);
+      break;
+    }
+    var saved = SowCard.saveCached(sowNo, data, baseline);
+    if (App.currentPage === 'sowcard') SowCard.render(saved ? SowCard.loadCached(sowNo) : data);
   },
 
   confirmDelete: function(sowNo, dateStr, penNo, bt, status) {
@@ -439,33 +576,40 @@ var SowCard = {
     if (status) desc.push(status);
     if (!confirm(dateStr + '「' + desc.join(' / ') + '」を削除しますか？')) return;
 
-    OfflineSync.enqueue('deleteBreedingRecord', [sowNo, dateStr, penNo, bt || '', status], {
+    if (!OfflineSync.enqueue('deleteBreedingRecord', [sowNo, dateStr, penNo, bt || '', status], {
+      applyLocal: function() {
+        SowCard.removeRecordLocal(sowNo, '繁殖管理', dateStr, { _penNo: penNo, _bt: bt, _status: status });
+        if (bt !== '' && bt !== null && bt !== undefined) Breeding.removeBTLocal(sowNo, dateStr, bt);
+      },
       onSuccess: function() { SowCard.refreshIfVisible(sowNo); }
-    });
+    })) return;
     App.toast('削除を記録しました');
   },
 
   confirmDeleteMating: function(sowNo, dateStr) {
     if (!confirm(dateStr + ' の種付記録を削除しますか？')) return;
-    OfflineSync.enqueue('deleteMatingRecord', [sowNo, dateStr], {
+    if (!OfflineSync.enqueue('deleteMatingRecord', [sowNo, dateStr], {
+      applyLocal: function() { SowCard.removeRecordLocal(sowNo, '種付', dateStr, {}); },
       onSuccess: function() { SowCard.refreshIfVisible(sowNo); }
-    });
+    })) return;
     App.toast('種付記録の削除を受け付けました');
   },
 
   confirmDeleteFarrowing: function(sowNo, dateStr, total, still) {
     if (!confirm(dateStr + ' の分娩記録を削除しますか？')) return;
-    OfflineSync.enqueue('deleteFarrowingRecord', [sowNo, dateStr, total, still], {
+    if (!OfflineSync.enqueue('deleteFarrowingRecord', [sowNo, dateStr, total, still], {
+      applyLocal: function() { SowCard.removeRecordLocal(sowNo, '分娩', dateStr, { _total: total, _still: still }); },
       onSuccess: function() { SowCard.refreshIfVisible(sowNo); }
-    });
+    })) return;
     App.toast('分娩記録の削除を受け付けました');
   },
 
   confirmDeleteWeaning: function(sowNo, dateStr, weaned, deaths) {
     if (!confirm(dateStr + ' の離乳記録を削除しますか？')) return;
-    OfflineSync.enqueue('deleteWeaningRecord', [sowNo, dateStr, weaned, deaths], {
+    if (!OfflineSync.enqueue('deleteWeaningRecord', [sowNo, dateStr, weaned, deaths], {
+      applyLocal: function() { SowCard.removeRecordLocal(sowNo, '離乳', dateStr, { _weaned: weaned, _deaths: deaths }); },
       onSuccess: function() { SowCard.refreshIfVisible(sowNo); }
-    });
+    })) return;
     App.toast('離乳記録の削除を受け付けました');
   }
 };
@@ -486,11 +630,11 @@ var Mating = {
     var dateStr = document.getElementById('mating-date').value;
     if (!sowNo) return;
 
+    if (!OfflineSync.enqueue('recordMating', [sowNo, dateStr], {
+      onSuccess: function() { SowCard.refreshIfVisible(sowNo); }
+    })) return;
     App.hideModal('mating-modal');
     App.toast('種付を記録しました');
-    OfflineSync.enqueue('recordMating', [sowNo, dateStr], {
-      onSuccess: function() { SowCard.refreshIfVisible(sowNo); }
-    });
   }
 };
 </script>

@@ -13,12 +13,54 @@
  */
 function getSowCard(sowNo, authToken) {
   requireAuth_(authToken);
-  var ss = getSpreadsheet();
+  return buildSowCardFromData_(sowNo, readSowCardData_(getSpreadsheet()));
+}
+
+function readSowCardData_(ss) {
+  var data = {};
+  ['母豚記録', '繁殖管理', '種付', '分娩', '離乳'].forEach(function(name) {
+    data[name] = ss.getSheetByName(name) ? getSheetData(ss, name) : [];
+  });
+  return data;
+}
+
+/** 初回同期で在籍母豚の編集用履歴も保存する。各シートは1回だけ読み、母豚別に分割。 */
+function buildOfflineSowCards_(ss, currentRows) {
+  var data = readSowCardData_(ss);
+  var wanted = Object.create(null);
+  currentRows.forEach(function(row) { wanted[String(row.sowNo)] = true; });
+  var bySow = Object.create(null);
+  Object.keys(data).forEach(function(name) {
+    var rows = data[name];
+    var sowColumn = name === '繁殖管理' ? 1 : 0;
+    if (name === '母豚記録') {
+      (rows[0] || []).some(function(header, column) {
+        if (/母豚番号|母豚No/.test(String(header))) { sowColumn = column; return true; }
+        return false;
+      });
+    }
+    for (var i = 1; i < rows.length; i++) {
+      var sowNo = normalizeSowNo(rows[i][sowColumn]);
+      if (!wanted[sowNo]) continue;
+      if (!bySow[sowNo]) bySow[sowNo] = {};
+      if (!bySow[sowNo][name]) bySow[sowNo][name] = [rows[0]];
+      bySow[sowNo][name].push(rows[i]);
+    }
+  });
+  var cards = {};
+  Object.keys(wanted).forEach(function(sowNo) {
+    var card = buildSowCardFromData_(sowNo, bySow[sowNo] || {});
+    if (!card.error) cards[sowNo] = card;
+  });
+  return cards;
+}
+
+function buildSowCardFromData_(sowNo, cardData) {
 
   // 母豚基本情報: まず母豚記録を参照、なければ種付記録から構築
   var sowInfo = null;
   try {
-    var sowData = getSheetData(ss, '母豚記録');
+    var sowData = cardData['母豚記録'] || [];
     var sowHeaders = (sowData[0] || []).map(function(value) { return String(value || '').trim(); });
     function sowColumn_(patterns, fallback) {
       for (var column = 0; column < sowHeaders.length; column++) {
@@ -48,7 +90,7 @@ function getSowCard(sowNo, authToken) {
   }
 
   // 繁殖管理（移動・BT値・ステータス統合）
-  var breedData = getSheetData(ss, '繁殖管理');
+  var breedData = cardData['繁殖管理'] || [];
   var breedingRecords = [];
   var currentPen = '未登録';
   var latestPenDate = null;
@@ -85,7 +127,7 @@ function getSowCard(sowNo, authToken) {
   }
 
   // 種付履歴（＋母豚記録にない場合の基本情報構築）
-  var matingData = getSheetData(ss, '種付');
+  var matingData = cardData['種付'] || [];
   var firstMatingDate = null;
   for (var i = 1; i < matingData.length; i++) {
     if (matingData[i][0] != sowNo) continue;
@@ -112,7 +154,7 @@ function getSowCard(sowNo, authToken) {
   }
 
   // 分娩履歴
-  var farrowData = getSheetData(ss, '分娩');
+  var farrowData = cardData['分娩'] || [];
   for (var i = 1; i < farrowData.length; i++) {
     if (farrowData[i][0] != sowNo) continue;
     var total = farrowData[i][2] || 0;
@@ -121,7 +163,7 @@ function getSowCard(sowNo, authToken) {
   }
 
   // 離乳履歴
-  var weanData = getSheetData(ss, '離乳');
+  var weanData = cardData['離乳'] || [];
   for (var i = 1; i < weanData.length; i++) {
     if (weanData[i][0] != sowNo) continue;
     var weaned = weanData[i][2] || 0;
