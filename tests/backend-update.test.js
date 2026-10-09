@@ -51,6 +51,7 @@ function loadApi(sheets) {
     toDateString: dateText
   };
   vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'apps-script-project', 'offline_sync.js'), 'utf8'), context);
   const source = fs.readFileSync(path.join(__dirname, '..', 'apps-script-project', 'api_breeding.js'), 'utf8');
   vm.runInContext(source, context);
   context.syncCurrentStatusForSow_ = () => {};
